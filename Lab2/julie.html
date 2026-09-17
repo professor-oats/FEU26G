@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Profile page of actress Julie Bennet">
+  <link rel="stylesheet" href="css/julie/julie.css">
+  <title>Heart of Julie</title>
+</head>
+<body>
+<article id="main-article">
+  <main>
+    <section>
+      <header>
+        <div id="hero-container">
+          <h1 id="hero-header">Julie Bennet</h1>
+          <img alt="profile picture of Julie Bennet" aria-label="profile picture of Julie Bennet" id="hero-profile-image" src="media/julie/trim1.png">
+          <img src="media/julie/leaves2.png" id="hero-leaves-image" alt="leaves">
+          <div id="hero-text">
+            <p>If leaves could speak</p>
+            <p>Every autumn they'd tell how</p>
+            <p>much they miss belonging</p>
+          </div>
+        </div>
+        <nav>
+          <ul id="shapeshifter">
+            <li><a onclick="showBio()" href="#main-content" role="button">Biography</a></li>
+            <li><a>|</a></li>
+            <li><a onclick="showGallery()" href="#gallery-content" role="button">Gallery</a></li>
+            <li><a>|</a></li>
+            <li><a href="contact.html" target="_blank">Contact</a></li>
+          </ul>
+        </nav>
+        <hr>
+        <hr>
+        <hr>
+        <hr>
+      </header>
+    </section>
+    <section>
+      <div id="main-content-container">
+        <div id="main-content" class="hidden">
+          <h2>Actress Information</h2>
+          <p><strong>Age</strong>: 14</p>
+          <p><strong>Gender:</strong> Female</p>
+          <p><strong>Height:</strong> 152 cm</p>
+          <p><strong>Hair:</strong> Carrotted</p>
+          <p><strong>Eyes:</strong> Gray</p>
+          <p><strong>Locality:</strong> London, Great Britain</p>
+          <h2>Early Career</h2>
+          <p>Born in Essex, Great Britain, Julie's talent for acting started in Primary School when she was
+          part of the school's customary act plays. Her first role was that of an autumn tree in the play Wizard of Oz and since she wanted more
+          active roles she signed up for the acting group in school. Her father, being part pianist, part warehouse worker, was supportive of the art of acting and spent
+          evening hours helping her rehearsal for school and later on for community group meetings each weekend as well. Mother half absent due to prolonged
+          hospital stays before passing.</p>
+          <h2>Roles of Mention</h2>
+          <ul>
+            <li>Voice Actress in <a href="https://www.imdb.com/title/tt27534307/?ls">Speak No Evil</a></li>
+            <li>Extra in <a href="https://www.imdb.com/title/tt13918446/">Harry Potter (Series)</a></li>
+          </ul>
+          <h2>Current Occupation</h2>
+          <p>Thanks to her early roles in voice acting, latest appearance in film, and community engagement she got accepted and enrolled
+          extra courses at London School of Dramatic Art to enhance her acting skills.</p>
+        </div>
+        <div id="gallery-content" class="hidden">
+          <div>
+            <h2>Extra in Harry Potter Series</h2>
+            <hr>
+            <img src="media/julie/azkaban1.png" alt="Picture showing Julie as extra in Harry Potter Series">
+          </div>
+          <div>
+            Playing the role of Gemma Norwood in the recording of the Harry Potter Series. Picture portraits still frame moment before dragons enter the school yard.
+            Gemma is an acquaintance of Ginny Weasley and has a few voice lines in one episode.
+          </div>
+          <div>
+            <h2>Admission for School of Dramatic Art</h2>
+            <hr>
+            <video width="640px" height="auto" controls>
+              <source src="media/julie/whydidyou.mp4" type="video/mp4">
+              <p>
+                Your browser doesn't support HTML video. Here is a
+                <a href="media/julie/whydidyou.mp4" download="whydidyou.mp4">link to the video</a> instead.
+              </p>
+            </video>
+          </div>
+          <div>
+            First submission for admission. Scene set is mother coming home from long absence and reaction questioning why.
+          </div>
+          <div>
+            <video width="640px" height="auto" controls>
+              <source src="media/julie/forgetit.mp4" type="video/mp4">
+              <p>
+                Your browser doesn't support HTML video. Here is a
+                <a href="media/julie/forgetit.mp4" download="forgetit.mp4">link to the video</a> instead.
+              </p>
+            </video>
+          </div>
+          <div>
+            Second submission for admission. Scene set is after the heated discussion with the newly returned absent mother.
+            Disappointment and disapproval of new promises from the mother is fact.
+          </div>
+        </div>
+        <footer>
+          <button id="cta-button"><a href="contact.html" target="_blank">Open for work</a></button>
+        </footer>
+      </div>
+    </section>
+  </main>
+</article>
+<script>
+  let mobile = window.matchMedia("(max-width:999px)");
+
+  if(mobile.matches){
+    document.getElementById("main-content").classList.remove("hidden");
+    document.getElementById("gallery-content").classList.remove("hidden");
+  }
+
+  else {
+    function showBio() {
+      document.getElementById("main-content").classList.remove("hidden");
+      document.getElementById("gallery-content").classList.add("hidden");
+    }
+
+    function showGallery() {
+      document.getElementById("main-content").classList.add("hidden");
+      document.getElementById("gallery-content").classList.remove("hidden");
+    }
+  }
+
+</script>
+</body>
+</html>
