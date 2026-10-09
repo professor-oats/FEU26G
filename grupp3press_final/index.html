@@ -1,0 +1,556 @@
+<!doctype html>
+<html lang="en">
+<!-- Credits!!!
+  1. Thanks Gegham Dev for the tutorial on how to make a spinning wheel
+-->
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <title>My Presentation</title>
+
+  <link rel="stylesheet" href="reveal.js/dist/reveal.css">
+  <link rel="stylesheet" href="reveal.js/dist/theme/black.css">
+
+  <style>
+    /* Small amount of custom styling */
+
+    .reveal section {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+    }
+
+    .reveal h1 {
+      margin-top: 10%;
+      font-size: 5rem;
+      color: white;
+    }
+    .reveal h2 {
+      background: linear-gradient(
+        90deg,
+        #ff1744,
+        #d500f9,
+        #651fff,
+        #2979ff,
+        #00e5ff,
+        #00e676,
+        #ffea00,
+        #ff6d00
+      );
+
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      -webkit-text-fill-color: transparent;
+
+      filter:
+        drop-shadow(0 4px 2px rgba(0, 0, 0, 0.9))
+        drop-shadow(0 0 6px rgba(0, 0, 0, 0.6));
+    }
+    .reveal h3 {
+      color: white;
+      text-shadow: 4px 4px 4px rgba(0, 0, 0, 0.8);
+    }
+
+    .reveal ul {
+      position: relative;
+
+      padding: 1.2em 1.8em 1.2em 2.2em;
+      margin: 0.4em auto;
+
+      max-width: 75%;
+
+      color: #3b2a1e;
+      background:
+        radial-gradient(
+          circle at 20% 30%,
+          rgba(120, 90, 55, 0.08) 0,
+          transparent 35%
+        ),
+        radial-gradient(
+          circle at 80% 70%,
+          rgba(100, 70, 40, 0.06) 0,
+          transparent 30%
+        ),
+        #e8dfc8;
+
+      border: 1px solid rgba(80, 55, 30, 0.35);
+
+      box-shadow:
+        0 4px 12px rgba(0, 0, 0, 0.25),
+        inset 0 0 25px rgba(90, 65, 35, 0.12);
+
+      /* Slightly irregular "cut paper" shape */
+      /*
+      clip-path: polygon(
+        1% 2%,
+        98% 0%,
+        100% 97%,
+        2% 100%
+      );
+       */
+    }
+
+    .reveal ul::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+
+      background:
+        repeating-linear-gradient(
+          0deg,
+          rgba(80, 55, 30, 0.025) 0,
+          rgba(80, 55, 30, 0.025) 1px,
+          transparent 1px,
+          transparent 4px
+        );
+
+      opacity: 1.0;
+    }
+
+    .reveal ul li {
+      padding-bottom: 0.4em !important;
+    }
+
+    .reveal .background-image {
+      background-size: cover;
+      background-position: center;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    .container-wheel {
+      position: absolute;
+      width: 500px;
+      height: 500px;
+      background-color: #ccc;
+      border: solid 15px #dde;
+      border-radius: 50%;
+      overflow: hidden;
+      transition: 5s;
+      left: 230px;
+    }
+
+    .container-wheel div {
+      position: absolute;
+      height: 50%;
+      width: 200px;
+      clip-path: polygon(100% 0, 50% 100%, 0 0);
+      transform: translateX(-50%);
+      transform-origin: bottom;
+      text-align: center;
+      display: flex;
+      align-items: flex-start;
+      padding-top: 0px;
+      justify-content: center;
+      font-size: 20px;
+      color: #fff;
+      left: 135px;
+    }
+
+    .container-wheel > div:nth-child(1) {
+      background-color: #3f51b5;
+      left: 50%;
+    }
+
+    .container-wheel > div:nth-child(2) {
+      background-color: #ff9800;
+      transform: rotate(45deg);
+    }
+
+    .container-wheel > div:nth-child(3) {
+      background-color: #e91e63;
+      transform:rotate(90deg);
+    }
+
+    .container-wheel > div:nth-child(4) {
+      background-color: #4caf50;
+      transform: rotate(135deg);
+    }
+
+    .container-wheel > div:nth-child(5) {
+      background-color: #009688;
+      transform: rotate(180deg);
+    }
+
+    .container-wheel > div:nth-child(6) {
+      background-color: #795548;
+      transform: rotate(225deg);
+    }
+
+    .container-wheel > div:nth-child(7) {
+      background-color: #9c27b0;
+      transform: rotate(270deg);
+    }
+
+    .container-wheel > div:nth-child(8) {
+      background-color: #f44336;
+      transform: rotate(315deg);
+    }
+
+    .arrow{
+      position: absolute;
+      top:50px;
+      left:50%;
+      transform: translateX(-50%);
+      color:#fff;
+    }
+
+    .arrow::before{
+      content:"\1F817";
+      font-size:50px;
+    }
+
+    #spin-button{
+      position: absolute;
+      top:50%;
+      left:50%;
+      transform:translate(-50%,-50%);
+      z-index:10;
+      background-color: #e2e2e2;
+      text-transform: uppercase;
+      border:8px solid #fff;
+      font-weight:bold;
+      font-size:20px;
+      color:#a2a2a2;
+      width: 80px;
+      height:80px;
+      font-family: sans-serif;
+      border-radius:50%;
+      cursor: pointer;
+      outline:none;
+      letter-spacing: 1px;
+    }
+
+    #luckyseven {
+      font-size: 100px;
+      font-family: Impact, "Arial Black", sans-serif;
+      font-weight: 900;
+      color: #ff1a1a;
+
+      /* Gold jackpot outline */
+      -webkit-text-stroke: 4px #ffd700;
+
+      /* 3D + glow */
+      text-shadow:
+        0 4px 0 #b8860b,
+        0 8px 0 #8b6508,
+        0 0 10px #ff0000,
+        0 0 25px #ff3333,
+        0 0 45px #ffd700;
+
+      /* Slightly chunky casino feel */
+      /* letter-spacing: -5px; */
+
+      /* Makes it pop */
+      /* transform: scale(1.1); */
+    }
+
+    #cat-container {
+      display: flex;
+      align-items: flex-start;
+      transform: translateX(-70px);
+    }
+
+    #fias-cats {
+      transform: translateY(20px);
+      max-width: 800px;
+      margin-left: -60px;
+      margin-right: -60px;
+    }
+
+    #catp {
+      transform: translateY(-40px);
+    }
+
+    /*
+    #wireframe-container {
+      width: 100%;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      gap: 10px;
+    }
+
+    #wireframe-container img {
+      width: 23%;
+      height: auto;
+      object-fit: contain;
+    }
+     */
+
+    .wireframe-container {
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+      justify-content: center;
+    }
+
+    .wireframe-container img {
+      flex: 1;
+      min-width: 0;
+      max-width: 24%;
+      max-height: 450px;
+      width: auto;
+      height: auto;
+      object-fit: contain;
+    }
+
+
+  </style>
+</head>
+
+<body>
+
+<div class="reveal">
+  <div class="slides">
+
+    <!-- Slide 1 -->
+    <section
+      data-background-image="assets/grupp3_front.png"
+      data-background-size="cover"
+      data-background-position="center"
+    >
+      <h1>Grupp3 - FEU26G</h1>
+      <p>A simple Reveal.js presentation</p>
+    </section>
+
+    <!-- 33 % Education
+     33 % Inspiration
+     33 % Entertainment
+     1 % Your X-Factor
+    -->
+
+    <!-- Start with a connection, not content -->
+
+    <section
+      data-background-image="assets/slides.png"
+      data-background-size="cover"
+      data-background-position="center"
+    >
+      <h2>Våra katter</h2>
+      <div id="cat-container" style="width:100vw;">
+        <img src="assets/fredriks/c1.jpeg" alt="fredriks_kattbild_ett" width="200px">
+        <span id="fias-cats">
+          <img src="assets/fias/c1.jpeg" alt="fias_kattbild_ett" width="200px">
+          <img src="assets/fias/c2.jpeg" alt="fias_kattbild_tva" width="200px">
+          <img src="assets/fias/c6.jpeg" alt="fias_kattbild_tre" width="200px">
+          <img id="catp" src="assets/ptest.png" alt="johnnys_kattbild_ett" width="400px">
+        </span>
+        <img src="assets/fredriks/c2.jpg" alt="fredriks_kattbild_tva" width="200px">
+      </div>
+
+    </section>
+
+    <section
+      data-background-image="assets/slides.png"
+      data-background-size="cover"
+      data-background-position="center"
+    >
+      <h2>Projektet vi valt</h2>
+      <span style="display:flex;">
+      <span style="display:flex; flex-direction:column;">
+        <img src="assets/kattsans_white_1.png" alt="logo_image" width="200" height="200">
+        <img src="assets/adopt_me.jpeg" alt="adopt_a_cat" width="200" height="200">
+      </span>
+      <ul>
+        <li>Hemsida för Kattsan's Adoptionsverksamhet.</li>
+        <li><strong>Syfte</strong> att hitta och underlätta adoption av katter.</li>
+      </ul>
+      </span>
+
+    </section>
+
+    <!-- Slide 2 with background image -->
+    <section
+      data-background-image="assets/slides.png"
+      data-background-size="cover"
+      data-background-position="center">
+
+      <h2>Kort om Kattsan's Adoptionsverksamhet</h2>
+      <ul>
+        <li>Från början ett <strong>Kattcafé</strong>.</li>
+        <li>Efter användargrupper:<br>Fokus på <strong>Adoption</strong></li>
+        <li>Ger en tydligare <strong>struktur</strong><br>Bättre upplevelse på webb</li>
+      </ul>
+
+    </section>
+
+    <section
+      data-background-image="assets/slides.png"
+      data-background-size="cover"
+      data-background-position="center"
+    >
+      <h2>User Research</h2>
+      <ul>
+        <li><strong>Intervju</strong> - För kvalitativt resultat <img src="assets/intervju.jpg" alt="picture_guy_with_mic" width="120px" style="position:absolute; right:40px; top: 10px;"></li>
+        <li>Viktigt med info om ålder, kön, personlighet + verksamhet</li>
+        <li>Tydlighet för adoptionsprocess</li>
+        <li>Enkel webbplats för att lätt hitta information<br> + tydligt och seriöst intryck</li>
+      </ul>
+    </section>
+
+    <section
+      data-background-image="assets/slides.png"
+      data-background-size="cover"
+      data-background-position="center"
+    >
+      <h2>User Research (Extra Slide)</h2>
+      <ul>
+        <li><strong>Intervju</strong> - För kvalitativt resultat <img src="assets/intervju.jpg" alt="picture_guy_with_mic" width="120px" style="position:absolute; right:40px; top: 10px;"></li>
+        <li>Stark betoning enkel navigation med få klick </li>
+        <li>Mycket värme och omtanke<br>Lekfullt hjälper intrycket t.ex.</li>
+        <li>Nedslimmad och enkel design<br>Keep it simple</li>
+      </ul>
+    </section>
+
+    <section
+      data-background-image="assets/slides.png"
+      data-background-size="cover"
+      data-background-position="center"
+    >
+      <h2>Vår Primära Användargrupp</h2>
+      <img src="assets/adoptionseeker.png" alt="bild_pa_adoptionsokare">
+    </section>
+
+    <section
+      data-background-image="assets/slides.png"
+      data-background-size="cover"
+      data-background-position="center"
+    >
+      <h2>Vår Sekundära Användargrupp</h2>
+      <img src="assets/kattalskaren.png" alt="bild_pa_kattalskare">
+    </section>
+
+    <section
+      data-background-image="assets/slides.png"
+      data-background-size="cover"
+      data-background-position="center"
+    >
+      <h2>Wireframes</h2>
+      <div class="wireframe-container">
+        <img src="assets/wireframestartsidastor.png" alt="bild_pa_wireframes_ett">
+        <img src="assets/wireframegalleristor.png" alt="bild_pa_wireframes_two">
+        <img src="assets/wireframestartsidaliten.png" alt="bild_pa_wireframes_three">
+        <img src="assets/wireframegalleriliten.png"  alt="bild_pa_wireframes_four">
+      </div>
+    </section>
+
+    <section
+      data-background-image="assets/slides.png"
+      data-background-size="cover"
+      data-background-position="center"
+    >
+      <h2>Prototyper</h2>
+      <div class="wireframe-container">
+        <img src="assets/prototypstartsidastor.png" alt="bild_pa_prototyp_ett">
+        <img src="assets/prototypgalleristor.png" alt="bild_pa_prototyp_two">
+        <img src="assets/prototypstartsidaliten.png" alt="bild_pa_prototyp_three">
+        <img src="assets/prototypgalleriliten.png"  alt="bild_pa_prototyp_four">
+      </div>
+    </section>
+
+    <!-- Tänk på att även tala med bilder här också. Bilder är bra för frispråk och ger mycket
+         på en press
+    -->
+    <section
+      data-background-image="assets/slides.png"
+      data-background-size="cover"
+      data-background-position="center"
+    >
+      <h2>Utmaningar och Roligt</h2>
+      <ul>
+        <li><strong>U</strong> - Lära sig Figma - Get pace</li>
+        <li><strong>U</strong> - Strukturera upp arbetet</li>
+        <li><strong>U</strong> - Krångligt koppla prototyper</li>
+        <li><strong>R</strong> - Roligt tillsammans i grupp</li>
+        <li><strong>R</strong> - Researcha Konkurrenter</li>
+        <li><strong>R</strong> - Eget tema och design</li>
+      </ul>
+    </section>
+
+    <!-- Slide 3 -->
+    <section
+      data-background-image="assets/slides.png"
+      data-background-size="cover"
+      data-background-position="center"
+    >
+      <h2>Förbättringar och Framtida Utveckling</h2>
+      <!-- Fredrik: Framtiden tydliga animationer -->
+      <ul>
+        <li>Animationer som värmer</li>
+        <li>Community-innehåll och aktiva grupper</li>
+        <li>Events och tematräffar för intressenter</li>
+        <li>Cat Wheel ????</li>
+      </ul>
+    </section>
+
+    <section
+      class="cat-wheel-slide"
+      data-background-image="assets/slides.png"
+      data-background-size="cover"
+      data-background-position="center"
+    >
+      <h2>Spin for a cat!</h2>
+
+      <div class="cat-wheel">
+        <button id="spin-button">Spin</button>
+        <span class="arrow"></span>
+        <div class="container-wheel">
+          <div><img src="assets/wheel/w1.png" alt="wheel_cat_one" width="80px"></div>
+          <div><img src="assets/wheel/w2.png" alt="wheel_cat_two" width="80px"></div>
+          <div><img src="assets/wheel/w3.png" alt="wheel_cat_three" width="80px"></div>
+          <div><img src="assets/wheel/w4.png" alt="wheel_cat_four" width="80px"></div>
+          <div><img src="assets/wheel/w5.png" alt="wheel_cat_five" width="80px"></div>
+          <div><img src="assets/wheel/w6.png" alt="wheel_cat_six" width="80px"></div>
+          <div id="luckyseven">7</div>
+          <div><img src="assets/wheel/w7.png" alt="wheel_cat_seven" width="80px"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Final slide -->
+    <section
+      data-background-image="assets/slides.png"
+      data-background-size="cover"
+      data-background-position="center"
+    >
+      <h2>Let's take a look at the website</h2>
+      <a href="website/kattsan.html" target="_blank">
+        Open website eller Figma Prototype
+      </a>
+    </section>
+
+  </div>
+</div>
+
+<script src="reveal.js/dist/reveal.js"></script>
+<script>
+  Reveal.initialize({
+    hash: true,
+    slideNumber: true
+  });
+</script>
+<script>
+  let container = document.querySelector(".container-wheel");
+  let btn = document.getElementById("spin-button");
+  let number = Math.ceil(Math.random() * 1000);
+
+  let clicks = 0;
+  btn.onclick = function () {
+    clicks += 1;
+    if(clicks > 1 ){
+      container.style.transform = "rotate(" + number + "deg)";
+      number += Math.ceil(Math.random() * 1000);
+    }
+  }
+</script>
+
+</body>
+</html>
