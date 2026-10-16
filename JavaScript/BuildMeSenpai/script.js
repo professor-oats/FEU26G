@@ -3,7 +3,7 @@ const ghostBlock = document.getElementById("ghost-block");
 const colorPicker = document.getElementById("color-picker");
 const canvas = document.getElementById("website-canvas");
 const elementType = document.getElementById("element-type");
-
+const editorMode = document.getElementById("editor-mode");
 const backgroundType = document.getElementById("background-type");
 const solidControls = document.getElementById("solid-controls");
 const gradientControls = document.getElementById("gradient-controls");
@@ -74,8 +74,8 @@ function renderProject() {
 let activeType = "header";
 let activeConfig = elementConfigs[activeType];
 
-// History of placed elements, used for undo
-//const placedElements = [];
+
+// Beginning of the data structure that holds the project element properties
 
 const project = {
   background: {
@@ -98,6 +98,18 @@ const STORAGE_KEY = "website-builder-saved-versions";
 const saveButton = document.getElementById("save-project");
 const savedVersions = document.getElementById("saved-versions");
 const restoreButton = document.getElementById("restore-project");
+
+
+function updateEditorMode() {
+  const isPlaceMode = editorMode.value === "place";
+
+  if (!isPlaceMode) {
+    ghostBlock.style.display = "none";
+  }
+
+  canvas.classList.toggle("place-mode", isPlaceMode);
+  canvas.classList.toggle("move-mode", !isPlaceMode);
+}
 
 function updateBackground() {
   const config = elementConfigs.header;
@@ -135,6 +147,7 @@ colorPicker.addEventListener("input", updateBackground);
 gradientStart.addEventListener("input", updateBackground);
 gradientEnd.addEventListener("input", updateBackground);
 gradientDirection.addEventListener("change", updateBackgroundControls);
+editorMode.addEventListener("change", updateEditorMode);
 
 // Apply the active configuration to the ghost
 function updateGhost() {
@@ -146,19 +159,6 @@ function updateGhost() {
 }
 
 // Recalculate the required canvas height
-/*
-function updateCanvasHeight() {
-  const lowestPoint = placedElements.reduce((max, element) => {
-    return Math.max(
-      max,
-      element.offsetTop + element.offsetHeight
-    );
-  }, window.innerHeight);
-
-  canvas.style.height = lowestPoint + "px";
-}
- */
-
 function updateCanvasHeight() {
   const lowestPoint = project.elements.reduce((max, element) => {
     return Math.max(max, element.y + element.height);
@@ -189,46 +189,34 @@ colorPicker.addEventListener("input", () => {
 
 // Move the ghost with the cursor
 canvas.addEventListener("mousemove", (event) => {
+  // Never show the ghost outside Place mode
+  if (editorMode.value !== "place" || activeDrag) {
+    ghostBlock.style.display = "none";
+    return;
+  }
+
   ghostBlock.style.left = event.clientX + "px";
   ghostBlock.style.top = event.clientY + "px";
   ghostBlock.style.display = "block";
 });
 
-// Hide the ghost when leaving the canvas
 canvas.addEventListener("mouseleave", () => {
   ghostBlock.style.display = "none";
 });
 
-// Place the active element on click
-/*
-canvas.addEventListener("click", (event) => {
-  const element = document.createElement("div");
 
-  element.classList.add("element", activeConfig.className);
+// Helper function to keep stacks in size
+function limitHistory(stack) {
+  if (stack.length > MAX_HISTORY) {
+    stack.shift();
+  }
+}
 
-  element.style.width = activeConfig.width + "px";
-  element.style.height = activeConfig.height + "px";
-  element.style.background = activeConfig.background;
-
-  // Convert viewport coordinates to canvas coordinates
-  const rect = canvas.getBoundingClientRect();
-
-  const x = event.clientX - rect.left;
-  const y = event.clientY - rect.top;
-
-  element.style.left = x + "px";
-  element.style.top = y + "px";
-  element.style.transform = "translate(-50%, -50%)";
-
-  canvas.appendChild(element);
-  placedElements.push(element);
-
-  // Update document height after placement
-  updateCanvasHeight();
-});
- */
+// This is our placeHandler
 
 canvas.addEventListener("click", (event) => {
+  if (editorMode.value !== "place") return;
+
   const rect = canvas.getBoundingClientRect();
 
   const elementData = {
@@ -251,9 +239,7 @@ canvas.addEventListener("click", (event) => {
   });
 
   // Keep only the latest 10 undo actions
-  if (undoStack.length > MAX_HISTORY) {
-    undoStack.shift();
-  }
+  limitHistory(undoStack);
 
   // A new action invalidates the redo history
   redoStack.length = 0;
@@ -262,85 +248,163 @@ canvas.addEventListener("click", (event) => {
   updateCanvasHeight();
 });
 
-function undoPlacement() {
+/*
+editorMode.addEventListener("change", () => {
+  canvas.classList.toggle(
+    "move-mode",
+    editorMode.value === "move"
+  );
+});
+ */
+
+// Start of our moveHandler
+let activeDrag = null;
+
+canvas.addEventListener("mousedown", (event) => {
+  if (editorMode.value !== "move") return;
+
+  const element = event.target.closest(".element");
+
+  if (!element || !canvas.contains(element)) return;
+
+  const data = project.elements.find(
+    (item) => item.id === element.dataset.id
+  );
+
+  if (!data) return;
+
+  event.preventDefault();
+
+  activeDrag = {
+    data,
+    element,
+    startMouseX: event.clientX,
+    startMouseY: event.clientY,
+    startX: data.x,
+    startY: data.y
+  };
+});
+
+document.addEventListener("mousemove", (event) => {
+  if (!activeDrag) return;
+
+  const drag = activeDrag;
+
+  // Calculate movement from the original mouse position
+  const dx = event.clientX - drag.startMouseX;
+  const dy = event.clientY - drag.startMouseY;
+
+  drag.data.x = drag.startX + dx;
+  drag.data.y = drag.startY + dy;
+
+  drag.element.style.left = drag.data.x + "px";
+  drag.element.style.top = drag.data.y + "px";
+});
+
+document.addEventListener("mouseup", () => {
+  if (!activeDrag) return;
+
+  const drag = activeDrag;
+  activeDrag = null;
+
+  const moved =
+    drag.data.x !== drag.startX ||
+    drag.data.y !== drag.startY;
+
+  if (!moved) return;
+
+  undoStack.push({
+    type: "move",
+    id: drag.data.id,
+    before: { x: drag.startX, y: drag.startY },
+    after: { x: drag.data.x, y: drag.data.y }
+  });
+
+  limitHistory(undoStack);
+  redoStack.length = 0;
+
+  updateCanvasHeight();
+});
+
+function undoAction() {
   const action = undoStack.pop();
 
   if (!action) return;
 
-  // Remove the element from the project data
-  project.elements = project.elements.filter(
-    (element) => element.id !== action.element.id
-  );
-
-  // Save the action so it can be redone
-  redoStack.push(action);
-
-  if (redoStack.length > MAX_HISTORY) {
-    redoStack.shift();
+  if (action.type === "place") {
+    project.elements = project.elements.filter(
+      (element) => element.id !== action.element.id
+    );
   }
 
+  if (action.type === "move") {
+    const element = project.elements.find(
+      (item) => item.id === action.id
+    );
+
+    if (element) {
+      element.x = action.before.x;
+      element.y = action.before.y;
+    }
+  }
+
+  redoStack.push(action);
+  limitHistory(redoStack);
   renderProject();
 }
 
-function redoPlacement() {
+function redoAction() {
   const action = redoStack.pop();
 
   if (!action) return;
 
-  // Restore the element to the project data
-  project.elements.push({ ...action.element });
-
-  // Record the action back in undo history
-  undoStack.push(action);
-
-  if (undoStack.length > MAX_HISTORY) {
-    undoStack.shift();
+  if (action.type === "place") {
+    project.elements.push({ ...action.element });
   }
 
+  if (action.type === "move") {
+    const element = project.elements.find(
+      (item) => item.id === action.id
+    );
+
+    if (element) {
+      element.x = action.after.x;
+      element.y = action.after.y;
+    }
+  }
+
+  undoStack.push(action);
+  limitHistory(undoStack);
   renderProject();
 }
 
-// Undo the last placed element with Ctrl+Z / Cmd+Z
-/*
-document.addEventListener("keydown", (event) => {
-  if (
-    (event.ctrlKey || event.metaKey) &&
-    event.key.toLowerCase() === "z"
-  ) {
-    event.preventDefault();
-
-    const lastElement = placedElements.pop();
-
-    if (lastElement) {
-      lastElement.remove();
-
-      // Recalculate height after undo
-      updateCanvasHeight();
-    }
-  }
-});
- */
-
 document.addEventListener("keydown", (event) => {
   const key = event.key.toLowerCase();
-
-  // Don't intercept shortcuts while typing in form controls
   const target = event.target;
-  const isEditing =
+
+  // Avoid shortcuts while the user is typing text.
+  const isTyping =
     target instanceof HTMLElement &&
     (target.isContentEditable ||
-      ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
+      ["INPUT", "TEXTAREA"].includes(target.tagName));
 
-  if (isEditing) return;
+  if (isTyping) return;
 
-  if ((event.ctrlKey || event.metaKey) && key === "z") {
+  const modifierPressed = event.ctrlKey || event.metaKey;
+
+  if (!modifierPressed) return;
+
+  // Undo: Ctrl+Z or Cmd+Z
+  if (key === "z" && !event.shiftKey) {
     event.preventDefault();
-    undoPlacement();
+    undoAction();
+    return;
   }
 
-  if ((event.ctrlKey || event.metaKey) && key === "y") {
+  // Redo: Ctrl+Y, Cmd+Y, Ctrl+Shift+Z, or Cmd+Shift+Z
+  if (key === "y" || (key === "z" && event.shiftKey)) {
     event.preventDefault();
-    redoPlacement();
+    redoAction();
   }
 });
 
@@ -435,5 +499,7 @@ restoreButton.addEventListener("click", restoreProjectVersion);
 // Initialize the ghost
 loadSavedVersions();
 updateBackgroundControls();
+editorMode.value = "place";
+updateEditorMode();
 updateGhost();
 renderProject();
