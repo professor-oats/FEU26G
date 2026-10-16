@@ -1,0 +1,58 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+}
+
+body {
+  cursor: none;
+  min-height: 100vh;
+  font-family: sans-serif;
+}
+
+#color-picker {
+  width: 48px;
+  height: 36px;
+  cursor: pointer;
+}
+
+#toolbar {
+  position: relative;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+  background: #eeeeee;
+}
+
+#solid-controls,
+#gradient-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+#website-canvas {
+  position: relative;
+  width: 100%;
+  min-height: 100vh;
+  background: #f5f5f5;
+}
+
+#ghost-block {
+  position: fixed;
+  display: none;
+  pointer-events: none;
+  opacity: 0.6;
+  z-index: 9999;
+  transform: translate(-50%, -50%);
+}
+
+.element {
+  position: absolute;
+}

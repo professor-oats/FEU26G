@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="ie=edge">
+  <link rel="stylesheet" href="styles.css">
+  <title>Website Builder</title>
+  <script src="script.js" defer></script>
+</head>
+<body>
+  <div id="toolbar">
+    <label for="element-type">Element:</label>
+    <select id="element-type">
+      <option value="header">Header</option>
+      <option value="text" disabled>Text block (coming soon)</option>
+      <option value="image" disabled>Image (coming soon)</option>
+      <option value="button" disabled>Button (coming soon)</option>
+    </select>
+    <label for="background-type">Background:</label>
+    <select id="background-type">
+      <option value="solid">Solid color</option>
+      <option value="gradient">Gradient</option>
+    </select>
+    <div id="solid-controls">
+      <label for="color-picker">Color:</label>
+      <input type="color" id="color-picker" value="#3366ff">
+    </div>
+
+    <div id="gradient-controls" hidden>
+      <label for="gradient-start">From:</label>
+      <input type="color" id="gradient-start" value="#3366ff">
+
+      <label for="gradient-end">To:</label>
+      <input type="color" id="gradient-end" value="#ff66aa">
+
+      <label for="gradient-direction">Direction:</label>
+      <select id="gradient-direction">
+        <option value="to right">Left to right</option>
+        <option value="to left">Right to left</option>
+        <option value="to bottom">Top to bottom</option>
+        <option value="to bottom right">Diagonal</option>
+      </select>
+    </div>
+  </div>
+  <main id="website-canvas">
+    <div id="ghost-block"></div>
+  </main>
+</body>
+</html>
