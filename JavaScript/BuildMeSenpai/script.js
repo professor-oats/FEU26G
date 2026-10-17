@@ -4,10 +4,12 @@ const colorPicker = document.getElementById("color-picker");
 const canvas = document.getElementById("website-canvas");
 const elementType = document.getElementById("element-type");
 const editorMode = document.getElementById("editor-mode");
+
 const backgroundType = document.getElementById("background-type");
 const solidControls = document.getElementById("solid-controls");
 const gradientControls = document.getElementById("gradient-controls");
-
+const paragraphFontSize = document.getElementById("paragraph-font-size");
+const fontFamily = document.getElementById("font-family");
 const gradientStart = document.getElementById("gradient-start");
 const gradientEnd = document.getElementById("gradient-end");
 const gradientDirection = document.getElementById("gradient-direction");
@@ -57,6 +59,12 @@ function renderElement(data) {
   element.style.background = data.background;
   element.style.transform = "translate(-50%, -50%)";
 
+  if (data.type === "text") {
+    element.style.fontFamily = data.fontFamily || "Arial";
+    element.style.fontSize = `${data.fontSize || 16}px`;
+    element.textContent = data.text || "";
+  }
+
   canvas.appendChild(element);
 }
 
@@ -101,6 +109,21 @@ const restoreButton = document.getElementById("restore-project");
 
 
 function updateEditorMode() {
+  const mode = editorMode.value;
+
+  canvas.classList.toggle("place-mode", mode === "place");
+  canvas.classList.toggle("move-mode", mode === "move");
+  canvas.classList.toggle("paragraph-mode", mode === "paragraph");
+
+  if (mode !== "place") {
+    ghostBlock.style.display = "none";
+  }
+
+  updateGhost();
+}
+
+/*
+function updateEditorMode() {
   const isPlaceMode = editorMode.value === "place";
 
   if (!isPlaceMode) {
@@ -109,7 +132,9 @@ function updateEditorMode() {
 
   canvas.classList.toggle("place-mode", isPlaceMode);
   canvas.classList.toggle("move-mode", !isPlaceMode);
+  canvas.classList.toggle("paragraph-mode", mode === "paragraph");
 }
+ */
 
 function updateBackground() {
   const config = elementConfigs.header;
@@ -151,6 +176,10 @@ editorMode.addEventListener("change", updateEditorMode);
 
 // Apply the active configuration to the ghost
 function updateGhost() {
+  if (editorMode.value !== "place") {
+    ghostBlock.style.display = "none";
+    return;
+  }
   ghostBlock.style.width = activeConfig.width + "px";
   ghostBlock.style.height = activeConfig.height + "px";
   ghostBlock.style.background = activeConfig.background;
@@ -187,6 +216,105 @@ colorPicker.addEventListener("input", () => {
   }
 });
 
+// Helper function for the paragraphHandler
+function applyParagraphTypography() {
+  if (!activeParagraphDraft) return;
+
+  const { textarea } = activeParagraphDraft;
+
+  textarea.style.fontFamily = fontFamily.value;
+  textarea.style.fontSize = `${paragraphFontSize.value}px`;
+}
+
+// Start of ParagraphHandler
+let activeParagraphDraft = null;
+
+function beginParagraphDraft(event) {
+  // Allow only one unfinished paragraph at a time.
+  if (activeParagraphDraft) return;
+
+  const rect = canvas.getBoundingClientRect();
+
+  const draft = document.createElement("div");
+  draft.className = "paragraph-draft";
+
+  const textarea = document.createElement("textarea");
+  textarea.placeholder = "Write your paragraph...";
+  textarea.setAttribute("aria-label", "Paragraph text");
+
+  const actions = document.createElement("div");
+  actions.className = "paragraph-draft-actions";
+
+  const cancelButton = document.createElement("button");
+  cancelButton.type = "button";
+  cancelButton.textContent = "Cancel";
+
+  const doneButton = document.createElement("button");
+  doneButton.type = "button";
+  doneButton.textContent = "Done";
+
+  actions.append(cancelButton, doneButton);
+  draft.append(textarea, actions);
+
+  draft.style.left = `${event.clientX - rect.left}px`;
+  draft.style.top = `${event.clientY - rect.top}px`;
+
+  canvas.appendChild(draft);
+
+  activeParagraphDraft = { draft, textarea };
+
+  applyParagraphTypography();
+
+  textarea.focus();
+
+  cancelButton.addEventListener("click", () => {
+    draft.remove();
+    activeParagraphDraft = null;
+  });
+
+  doneButton.addEventListener("click", () => {
+    const text = textarea.value.trim();
+
+    if (!text) {
+      textarea.focus();
+      return;
+    }
+
+    const elementData = {
+      id: crypto.randomUUID(),
+      type: "text",
+      x: parseFloat(draft.style.left),
+      y: parseFloat(draft.style.top),
+      width: draft.offsetWidth,
+      height: textarea.scrollHeight,
+      text,
+      fontFamily: fontFamily.value,
+      fontSize: Number(paragraphFontSize.value),
+      background: "transparent"
+    };
+
+    draft.remove();
+    activeParagraphDraft = null;
+
+    project.elements.push(elementData);
+
+    undoStack.push({
+      type: "place",
+      element: { ...elementData }
+    });
+
+    limitHistory(undoStack);
+    redoStack.length = 0;
+
+    renderElement(elementData);
+    updateCanvasHeight();
+  });
+}
+
+fontFamily.addEventListener("change", applyParagraphTypography);
+
+paragraphFontSize.addEventListener("change", applyParagraphTypography);
+
 // Move the ghost with the cursor
 canvas.addEventListener("mousemove", (event) => {
   // Never show the ghost outside Place mode
@@ -214,6 +342,46 @@ function limitHistory(stack) {
 
 // This is our placeHandler
 
+canvas.addEventListener("click", (event) => {
+  // Ignore clicks inside the temporary paragraph editor.
+  if (event.target.closest(".paragraph-draft")) return;
+
+  // Paragraph mode opens the text editor.
+  if (editorMode.value === "paragraph") {
+    beginParagraphDraft(event);
+    return;
+  }
+
+  // Only Place mode can create regular elements.
+  if (editorMode.value !== "place") return;
+
+  const rect = canvas.getBoundingClientRect();
+
+  const elementData = {
+    id: crypto.randomUUID(),
+    type: activeType,
+    x: event.clientX - rect.left,
+    y: event.clientY - rect.top,
+    width: activeConfig.width,
+    height: activeConfig.height,
+    background: activeConfig.background
+  };
+
+  project.elements.push(elementData);
+
+  undoStack.push({
+    type: "place",
+    element: { ...elementData }
+  });
+
+  limitHistory(undoStack);
+  redoStack.length = 0;
+
+  renderElement(elementData);
+  updateCanvasHeight();
+});
+
+/*
 canvas.addEventListener("click", (event) => {
   if (editorMode.value !== "place") return;
 
@@ -246,14 +414,6 @@ canvas.addEventListener("click", (event) => {
 
   renderElement(elementData);
   updateCanvasHeight();
-});
-
-/*
-editorMode.addEventListener("change", () => {
-  canvas.classList.toggle(
-    "move-mode",
-    editorMode.value === "move"
-  );
 });
  */
 

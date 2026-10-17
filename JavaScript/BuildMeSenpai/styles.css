@@ -45,6 +45,10 @@ body {
   cursor: none;
 }
 
+#website-canvas.paragraph-mode {
+  cursor: text;
+}
+
 #website-canvas.place-mode {
   cursor: none;
 }
@@ -73,4 +77,42 @@ body {
 
 .element {
   position: absolute;
+}
+
+.paragraph-draft {
+  position: absolute;
+  z-index: 1000;
+  width: 320px;
+  background: white;
+  border: 1px solid #888;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 15%);
+}
+
+.paragraph-draft textarea {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 100px;
+  padding: 10px;
+  border: none;
+  outline: none;
+  resize: vertical;
+  background: white;
+  color: black;
+  line-height: 1.5;
+  overflow-wrap: break-word;
+}
+
+.paragraph-draft-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 6px;
+  border-top: 1px solid #ddd;
+  background: #f7f7f7;
+}
+
+.paragraph-draft-actions button {
+  cursor: pointer;
+  padding: 5px 10px;
 }
