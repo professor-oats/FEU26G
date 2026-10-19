@@ -65,6 +65,58 @@ body {
   cursor: grabbing;
 }
 
+#website-canvas.edit-mode .element {
+  cursor: pointer;
+}
+
+#selection-overlay {
+  position: absolute;
+  z-index: 2000;
+  border: 2px dashed #3366ff;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  box-sizing: border-box;
+}
+
+#selection-overlay[hidden] {
+  display: none;
+}
+
+.resize-handle {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  background: white;
+  border: 1px solid #3366ff;
+  border-radius: 2px;
+  pointer-events: auto;
+  box-sizing: border-box;
+}
+
+.resize-handle[data-corner="nw"] {
+  left: -5px;
+  top: -5px;
+  cursor: nwse-resize;
+}
+
+.resize-handle[data-corner="ne"] {
+  right: -5px;
+  top: -5px;
+  cursor: nesw-resize;
+}
+
+.resize-handle[data-corner="sw"] {
+  left: -5px;
+  bottom: -5px;
+  cursor: nesw-resize;
+}
+
+.resize-handle[data-corner="se"] {
+  right: -5px;
+  bottom: -5px;
+  cursor: nwse-resize;
+}
+
 #ghost-block {
   position: fixed;
   display: none;
@@ -98,7 +150,7 @@ body {
   outline: none;
   resize: vertical;
   background: white;
-  color: black;
+  color: #000000;
   line-height: 1.5;
   overflow-wrap: break-word;
 }

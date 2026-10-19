@@ -1,5 +1,5 @@
+// MAIN DECLARATIONS
 const ghostBlock = document.getElementById("ghost-block");
-//let mouseX = 0, mouseY = 0;
 const colorPicker = document.getElementById("color-picker");
 const canvas = document.getElementById("website-canvas");
 const elementType = document.getElementById("element-type");
@@ -13,6 +13,51 @@ const fontFamily = document.getElementById("font-family");
 const gradientStart = document.getElementById("gradient-start");
 const gradientEnd = document.getElementById("gradient-end");
 const gradientDirection = document.getElementById("gradient-direction");
+const selectionOverlay = document.getElementById("selection-overlay");
+
+// EVENT LISTENERS
+backgroundType.addEventListener("change", updateBackgroundControls);
+//colorPicker.addEventListener("input", updateBackground);
+gradientStart.addEventListener("input", updateBackground);
+gradientEnd.addEventListener("input", updateBackground);
+gradientDirection.addEventListener("change", updateBackgroundControls);
+//editorMode.addEventListener("change", updateEditorMode);
+
+colorPicker.addEventListener("input", () => {
+  if (editorMode.value === "paragraph") {
+    applyParagraphTypography();
+    return;
+  }
+
+  // Preserve the existing background/header color behavior.
+  updateBackground();
+  elementConfigs.header.background = colorPicker.value;
+
+  updateGhost();
+
+});
+
+
+editorMode.addEventListener("change", () => {
+  if (editorMode.value === "paragraph") {
+    colorPicker.value = "#000000";
+
+    // Apply black immediately if a paragraph draft is already open.
+    applyParagraphTypography();
+  }
+  else if (editorMode.value === "place" && activeType === "header") {
+    // Restore the header's saved color in the picker.
+    colorPicker.value = elementConfigs.header.background;
+  }
+
+  // Allow the picker in Paragraph mode or when editing a header.
+  colorPicker.disabled = !(
+    editorMode.value === "paragraph" ||
+    activeType === "header"
+  );
+
+  updateEditorMode();
+});
 
 // Configuration for each type of element
 const elementConfigs = {
@@ -20,68 +65,36 @@ const elementConfigs = {
     className: "header-block",
     width: 800,
     height: 120,
-    background: "#3366ff"
+    background: "#3366ff",
+    editableProperties: ["background"]
   },
 
   text: {
     className: "text-block",
     width: 300,
     height: 100,
-    background: "#ffffff"
+    background: "transparent",
+    color: "#000000",
+    editableProperties: ["color", "fontFamily", "fontSize", "text"]
   },
 
   image: {
     className: "image-block",
     width: 400,
     height: 250,
-    background: "#dddddd"
+    background: "#dddddd",
+    editableProperties: ["background"]
   },
 
   button: {
     className: "button-block",
     width: 160,
     height: 50,
-    background: "#3366ff"
+    background: "#3366ff",
+    color: "#ffffff",
+    editableProperties: ["background", "color", "text"]
   }
 };
-
-function renderElement(data) {
-  const config = elementConfigs[data.type];
-  const element = document.createElement("div");
-
-  element.classList.add("element", config.className);
-  element.dataset.id = data.id;
-
-  element.style.left = data.x + "px";
-  element.style.top = data.y + "px";
-  element.style.width = data.width + "px";
-  element.style.height = data.height + "px";
-  element.style.background = data.background;
-  element.style.transform = "translate(-50%, -50%)";
-
-  if (data.type === "text") {
-    element.style.fontFamily = data.fontFamily || "Arial";
-    element.style.fontSize = `${data.fontSize || 16}px`;
-    element.textContent = data.text || "";
-  }
-
-  canvas.appendChild(element);
-}
-
-function renderProject() {
-  canvas.querySelectorAll(".element").forEach((element) => {
-    element.remove();
-  });
-
-  project.elements.forEach(renderElement);
-
-  updateCanvasHeight();
-}
-
-// The element currently being previewed
-let activeType = "header";
-let activeConfig = elementConfigs[activeType];
-
 
 // Beginning of the data structure that holds the project element properties
 
@@ -108,34 +121,137 @@ const savedVersions = document.getElementById("saved-versions");
 const restoreButton = document.getElementById("restore-project");
 
 
+function renderElement(data) {
+  const config = elementConfigs[data.type];
+  const element = document.createElement("div");
+
+  element.classList.add("element", config.className);
+  element.dataset.id = data.id;
+
+  element.style.left = data.x + "px";
+  element.style.top = data.y + "px";
+  element.style.width = data.width + "px";
+  element.style.height = data.height + "px";
+  element.style.background = data.background;
+  element.style.transform = "translate(-50%, -50%)";
+
+  if (data.type === "text") {
+    element.style.fontFamily = data.fontFamily || "Arial";
+    element.style.fontSize = `${data.fontSize || 16}px`;
+    element.style.color = data.color || "#000000";
+    element.style.background = "transparent";
+    element.textContent = data.text || "";
+  }
+
+  canvas.appendChild(element);
+}
+
+let selectedElementId = null;
+let activeResize = null;
+let selectedElement = null;
+let selectedElementData = null;
+
+selectionOverlay.id = "selection-overlay";
+selectionOverlay.hidden = true;
+
+const resizeHandles = {};
+
+["nw", "ne", "sw", "se"].forEach((corner) => {
+  const handle = document.createElement("div");
+  handle.className = "resize-handle";
+  handle.dataset.corner = corner;
+
+  selectionOverlay.appendChild(handle);
+  resizeHandles[corner] = handle;
+});
+
+canvas.appendChild(selectionOverlay);
+
+function selectElement(element) {
+  selectedElementId = element.dataset.id;
+
+  activeType = project.elements.find(
+    (item) => item.id === selectedElementId
+  )?.type;
+
+  activeConfig = elementConfigs[activeType];
+
+  updateSelectionOverlay();
+}
+
+function updateSelectionOverlay() {
+  if (editorMode.value !== "edit" || !selectedElementId) {
+    selectionOverlay.hidden = true;
+    return;
+  }
+
+  const data = project.elements.find(
+    (item) => item.id === selectedElementId
+  );
+
+  if (!data) {
+    selectionOverlay.hidden = true;
+    return;
+  }
+
+  selectionOverlay.style.left = `${data.x}px`;
+  selectionOverlay.style.top = `${data.y}px`;
+  selectionOverlay.style.width = `${data.width}px`;
+  selectionOverlay.style.height = `${data.height}px`;
+  selectionOverlay.hidden = false;
+}
+
+function renderProject() {
+  canvas.querySelectorAll(".element").forEach((element) => {
+    element.remove();
+  });
+
+  project.elements.forEach(renderElement);
+
+  updateCanvasHeight();
+  updateSelectionOverlay();
+}
+
+// The element currently being previewed
+// This will be changed dynamically with drop down event "change"
+/*
+let activeType = "header";
+let activeConfig = elementConfigs[activeType];
+*/
+let activeType = elementType.value;
+let activeConfig = elementConfigs[activeType];
+
+
 function updateEditorMode() {
   const mode = editorMode.value;
 
   canvas.classList.toggle("place-mode", mode === "place");
   canvas.classList.toggle("move-mode", mode === "move");
   canvas.classList.toggle("paragraph-mode", mode === "paragraph");
+  canvas.classList.toggle("edit-mode", mode === "edit");
 
   if (mode !== "place") {
     ghostBlock.style.display = "none";
   }
 
   updateGhost();
+  updateSelectionOverlay();
 }
 
-/*
-function updateEditorMode() {
-  const isPlaceMode = editorMode.value === "place";
+function updateToolbarForSelection() {
+  if (!selectedElementData || !activeConfig) return;
 
-  if (!isPlaceMode) {
-    ghostBlock.style.display = "none";
-  }
+  const editable = activeConfig.editableProperties;
 
-  canvas.classList.toggle("place-mode", isPlaceMode);
-  canvas.classList.toggle("move-mode", !isPlaceMode);
-  canvas.classList.toggle("paragraph-mode", mode === "paragraph");
+  backgroundControls.hidden = !editable.includes("background");
+  colorControls.hidden = !editable.includes("color");
+  fontFamilyControls.hidden = !editable.includes("fontFamily");
+  fontSizeControls.hidden = !editable.includes("fontSize");
+  textControls.hidden = !editable.includes("text");
 }
- */
 
+// This function will update background and update ghost for all elements that support
+// background property
 function updateBackground() {
   const config = elementConfigs.header;
 
@@ -151,6 +267,7 @@ function updateBackground() {
     updateGhost();
   }
 
+  // Ensures the user picked values will be put into the project dataset correctly
   project.background.type = backgroundType.value;
   project.background.color = colorPicker.value;
   project.background.gradientStart = gradientStart.value;
@@ -166,13 +283,6 @@ function updateBackgroundControls() {
 
   updateBackground();
 }
-
-backgroundType.addEventListener("change", updateBackgroundControls);
-colorPicker.addEventListener("input", updateBackground);
-gradientStart.addEventListener("input", updateBackground);
-gradientEnd.addEventListener("input", updateBackground);
-gradientDirection.addEventListener("change", updateBackgroundControls);
-editorMode.addEventListener("change", updateEditorMode);
 
 // Apply the active configuration to the ghost
 function updateGhost() {
@@ -203,11 +313,15 @@ elementType.addEventListener("change", () => {
 
   updateGhost();
 
-  // Only show the color picker for headers for now
-  colorPicker.disabled = activeType !== "header";
+  // Only show the color picker for headers + paragraph for now
+  colorPicker.disabled = !(
+    activeType === "header" ||
+    editorMode.value === "paragraph"
+  );
 });
 
 // Update the header color
+/*
 colorPicker.addEventListener("input", () => {
   elementConfigs.header.background = colorPicker.value;
 
@@ -215,6 +329,7 @@ colorPicker.addEventListener("input", () => {
     updateGhost();
   }
 });
+ */
 
 // Helper function for the paragraphHandler
 function applyParagraphTypography() {
@@ -224,6 +339,7 @@ function applyParagraphTypography() {
 
   textarea.style.fontFamily = fontFamily.value;
   textarea.style.fontSize = `${paragraphFontSize.value}px`;
+  //textarea.style.color = colorPicker.value;
 }
 
 // Start of ParagraphHandler
@@ -290,7 +406,8 @@ function beginParagraphDraft(event) {
       text,
       fontFamily: fontFamily.value,
       fontSize: Number(paragraphFontSize.value),
-      background: "transparent"
+      background: "transparent",
+      color: colorPicker.value
     };
 
     draft.remove();
@@ -352,6 +469,22 @@ canvas.addEventListener("click", (event) => {
     return;
   }
 
+  if (editorMode.value === "edit") {
+    // Clicking a resize handle should not clear the selection.
+    if (event.target.closest("#selection-overlay")) return;
+
+    const element = event.target.closest(".element");
+
+    if (element && canvas.contains(element)) {
+      selectElement(element);
+    } else {
+      selectedElementId = null;
+      updateSelectionOverlay();
+    }
+
+    return;
+  }
+
   // Only Place mode can create regular elements.
   if (editorMode.value !== "place") return;
 
@@ -364,7 +497,8 @@ canvas.addEventListener("click", (event) => {
     y: event.clientY - rect.top,
     width: activeConfig.width,
     height: activeConfig.height,
-    background: activeConfig.background
+    background: activeConfig.background,
+    color: activeConfig.color
   };
 
   project.elements.push(elementData);
@@ -380,47 +514,42 @@ canvas.addEventListener("click", (event) => {
   renderElement(elementData);
   updateCanvasHeight();
 });
-
-/*
-canvas.addEventListener("click", (event) => {
-  if (editorMode.value !== "place") return;
-
-  const rect = canvas.getBoundingClientRect();
-
-  const elementData = {
-    id: crypto.randomUUID(),
-    type: activeType,
-    x: event.clientX - rect.left,
-    y: event.clientY - rect.top,
-    width: activeConfig.width,
-    height: activeConfig.height,
-    background: activeConfig.background
-  };
-
-  // Add the element to the project data
-  project.elements.push(elementData);
-
-  // Record this placement for undo
-  undoStack.push({
-    type: "place",
-    element: { ...elementData }
-  });
-
-  // Keep only the latest 10 undo actions
-  limitHistory(undoStack);
-
-  // A new action invalidates the redo history
-  redoStack.length = 0;
-
-  renderElement(elementData);
-  updateCanvasHeight();
-});
- */
 
 // Start of our moveHandler
 let activeDrag = null;
 
 canvas.addEventListener("mousedown", (event) => {
+  // Edit mode: resize using a corner handle.
+  if (editorMode.value === "edit") {
+    const handle = event.target.closest(".resize-handle");
+
+    if (!handle || !selectedElementId) return;
+
+    const data = project.elements.find(
+      (item) => item.id === selectedElementId
+    );
+
+    if (!data) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    activeResize = {
+      id: data.id,
+      corner: handle.dataset.corner,
+      startMouseX: event.clientX,
+      startMouseY: event.clientY,
+      before: {
+        x: data.x,
+        y: data.y,
+        width: data.width,
+        height: data.height
+      }
+    };
+
+    return;
+  }
+
   if (editorMode.value !== "move") return;
 
   const element = event.target.closest(".element");
@@ -446,6 +575,80 @@ canvas.addEventListener("mousedown", (event) => {
 });
 
 document.addEventListener("mousemove", (event) => {
+  // EDIT MODE: Resize the selected element.
+  if (activeResize) {
+    const resize = activeResize;
+
+    const data = project.elements.find(
+      (item) => item.id === resize.id
+    );
+
+    if (!data) return;
+
+    const dx = event.clientX - resize.startMouseX;
+    const dy = event.clientY - resize.startMouseY;
+
+    const { x, y, width, height } = resize.before;
+
+    const fromWest = resize.corner.includes("w");
+    const fromNorth = resize.corner.includes("n");
+
+    const newWidth = Math.max(
+      40,
+      width + (fromWest ? -dx : dx)
+    );
+
+    const newHeight = Math.max(
+      30,
+      height + (fromNorth ? -dy : dy)
+    );
+
+    // Update the project data while dragging.
+    data.width = newWidth;
+    data.height = newHeight;
+
+    // Keep the opposite corner in the same position.
+    data.x =
+      x + (fromWest ? -1 : 1) * (newWidth - width) / 2;
+
+    data.y =
+      y + (fromNorth ? -1 : 1) * (newHeight - height) / 2;
+
+    // Update the visible element immediately.
+    const element = canvas.querySelector(
+      `.element[data-id="${resize.id}"]`
+    );
+
+    if (element) {
+      element.style.left = `${data.x}px`;
+      element.style.top = `${data.y}px`;
+      element.style.width = `${data.width}px`;
+      element.style.height = `${data.height}px`;
+    }
+
+    // Keep the dashed outline and handles aligned during resizing.
+    updateSelectionOverlay();
+
+    return;
+  }
+
+  // MOVE MODE: Keep your existing movement behavior unchanged.
+  if (!activeDrag) return;
+
+  const drag = activeDrag;
+
+  const dx = event.clientX - drag.startMouseX;
+  const dy = event.clientY - drag.startMouseY;
+
+  drag.data.x = drag.startX + dx;
+  drag.data.y = drag.startY + dy;
+
+  drag.element.style.left = drag.data.x + "px";
+  drag.element.style.top = drag.data.y + "px";
+});
+
+/*
+document.addEventListener("mousemove", (event) => {
   if (!activeDrag) return;
 
   const drag = activeDrag;
@@ -460,8 +663,52 @@ document.addEventListener("mousemove", (event) => {
   drag.element.style.left = drag.data.x + "px";
   drag.element.style.top = drag.data.y + "px";
 });
+ */
 
 document.addEventListener("mouseup", () => {
+  // Finish resizing.
+  if (activeResize) {
+    const resize = activeResize;
+    activeResize = null;
+
+    const data = project.elements.find(
+      (item) => item.id === resize.id
+    );
+
+    // Refresh the outline using the final dimensions.
+    updateSelectionOverlay();
+
+    if (!data) return;
+
+    const before = resize.before;
+
+    const after = {
+      x: data.x,
+      y: data.y,
+      width: data.width,
+      height: data.height
+    };
+
+    const changed = Object.keys(before).some(
+      (key) => before[key] !== after[key]
+    );
+
+    if (!changed) return;
+
+    undoStack.push({
+      type: "resize",
+      id: resize.id,
+      before,
+      after
+    });
+
+    limitHistory(undoStack);
+    redoStack.length = 0;
+
+    updateCanvasHeight();
+    return;
+  }
+
   if (!activeDrag) return;
 
   const drag = activeDrag;
@@ -508,6 +755,16 @@ function undoAction() {
     }
   }
 
+  if (action.type === "resize") {
+    const element = project.elements.find(
+      (item) => item.id === action.id
+    );
+
+    if (element) {
+      Object.assign(element, action.before);
+    }
+  }
+
   redoStack.push(action);
   limitHistory(redoStack);
   renderProject();
@@ -530,6 +787,16 @@ function redoAction() {
     if (element) {
       element.x = action.after.x;
       element.y = action.after.y;
+    }
+  }
+
+  if (action.type === "resize") {
+    const element = project.elements.find(
+      (item) => item.id === action.id
+    );
+
+    if (element) {
+      Object.assign(element, action.after);
     }
   }
 
