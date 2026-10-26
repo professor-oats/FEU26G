@@ -170,11 +170,20 @@ canvas.appendChild(selectionOverlay);
 function selectElement(element) {
   selectedElementId = element.dataset.id;
 
-  activeType = project.elements.find(
+  const data = project.elements.find(
     (item) => item.id === selectedElementId
-  )?.type;
+  );
 
+  if (!data) return;
+
+  activeType = data.type;
   activeConfig = elementConfigs[activeType];
+
+  // Load the selected paragraph's current typography into the controls.
+  if (data.type === "text") {
+    fontFamily.value = data.fontFamily || "Arial";
+    paragraphFontSize.value = String(data.fontSize || 16);
+  }
 
   updateSelectionOverlay();
 }
@@ -342,6 +351,69 @@ function applyParagraphTypography() {
   //textarea.style.color = colorPicker.value;
 }
 
+function syncTypographyControls() {
+  const data = project.elements.find(
+    (item) => item.id === selectedElementId
+  );
+
+  if (!data || data.type !== "text") return;
+
+  fontFamily.value = data.fontFamily || "Arial";
+  paragraphFontSize.value = String(data.fontSize || 16);
+}
+
+
+function updateSelectedParagraphProperty(property, value) {
+  if (editorMode.value !== "edit" || !selectedElementId) {
+    return;
+  }
+
+  const data = project.elements.find(
+    (item) => item.id === selectedElementId
+  );
+
+  if (!data || data.type !== "text") {
+    return;
+  }
+
+  const before = data[property];
+
+  // Ignore changes that don't actually change the value.
+  if (before === value) return;
+
+  // Update the project data.
+  data[property] = value;
+
+  // Update the visible paragraph immediately.
+  const element = [...canvas.querySelectorAll(".element")]
+    .find((item) => item.dataset.id === selectedElementId);
+
+  if (element) {
+    if (property === "fontFamily") {
+      element.style.fontFamily = value;
+    }
+
+    if (property === "fontSize") {
+      element.style.fontSize = `${value}px`;
+    }
+  }
+
+  // Record the change so it can be undone and redone.
+  undoStack.push({
+    type: "property",
+    id: data.id,
+    property,
+    before,
+    after: value
+  });
+
+  limitHistory(undoStack);
+
+  // A new edit clears the redo history.
+  redoStack.length = 0;
+}
+
+
 // Start of ParagraphHandler
 let activeParagraphDraft = null;
 
@@ -428,9 +500,34 @@ function beginParagraphDraft(event) {
   });
 }
 
-fontFamily.addEventListener("change", applyParagraphTypography);
+fontFamily.addEventListener("input", () => {
+  if (editorMode.value === "paragraph") {
+    applyParagraphTypography();
+    return;
+  }
 
-paragraphFontSize.addEventListener("change", applyParagraphTypography);
+  if (editorMode.value === "edit") {
+    updateSelectedParagraphProperty(
+      "fontFamily",
+      fontFamily.value
+    );
+  }
+});
+
+paragraphFontSize.addEventListener("input", () => {
+  if (editorMode.value === "paragraph") {
+    applyParagraphTypography();
+    return;
+  }
+
+  if (editorMode.value === "edit") {
+    updateSelectedParagraphProperty(
+      "fontSize",
+      Number(paragraphFontSize.value)
+    );
+  }
+});
+
 
 // Move the ghost with the cursor
 canvas.addEventListener("mousemove", (event) => {
@@ -765,9 +862,21 @@ function undoAction() {
     }
   }
 
+  if (action.type === "property") {
+    const element = project.elements.find(
+      (item) => item.id === action.id
+    );
+
+    if (element) {
+      element[action.property] = action.before;
+    }
+  }
+
+
   redoStack.push(action);
   limitHistory(redoStack);
   renderProject();
+  syncTypographyControls();
 }
 
 function redoAction() {
@@ -800,9 +909,21 @@ function redoAction() {
     }
   }
 
+  if (action.type === "property") {
+    const element = project.elements.find(
+      (item) => item.id === action.id
+    );
+
+    if (element) {
+      element[action.property] = action.after;
+    }
+  }
+
+
   undoStack.push(action);
   limitHistory(undoStack);
   renderProject();
+  syncTypographyControls();
 }
 
 document.addEventListener("keydown", (event) => {
