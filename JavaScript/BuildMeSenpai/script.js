@@ -254,6 +254,47 @@ function findBestAlignment(movingData, axis) {
   return bestMatch;
 }
 
+
+function findBestResizeAlignment(movingData, axis, edge) {
+  const moving = getElementBounds(movingData);
+
+  // Only the edge being dragged can trigger a resize snap.
+  const movingValue = moving[edge];
+
+  const threshold = 6;
+  let bestMatch = null;
+
+  for (const targetData of project.elements) {
+    if (targetData.id === movingData.id) continue;
+
+    const target = getElementBounds(targetData);
+
+    const targetValues = axis === "x"
+      ? [target.left, target.centerX, target.right]
+      : [target.top, target.centerY, target.bottom];
+
+    for (const targetValue of targetValues) {
+      const delta = targetValue - movingValue;
+      const distance = Math.abs(delta);
+
+      if (
+        distance <= threshold &&
+        (!bestMatch || distance < bestMatch.distance)
+      ) {
+        bestMatch = {
+          delta,
+          distance,
+          position: targetValue,
+          targetData
+        };
+      }
+    }
+  }
+
+  return bestMatch;
+}
+
+
 function updateAlignmentGuides(movingData, xMatch, yMatch) {
   hideAlignmentGuides();
 
@@ -849,6 +890,52 @@ document.addEventListener("mousemove", (event) => {
 
     data.y =
       y + (fromNorth ? -1 : 1) * (newHeight - height) / 2;
+
+
+    // Find alignments for the edges currently being dragged.
+    const xEdge = fromWest ? "left" : "right";
+    const yEdge = fromNorth ? "top" : "bottom";
+
+    const xMatch = findBestResizeAlignment(data, "x", xEdge);
+    const yMatch = findBestResizeAlignment(data, "y", yEdge);
+
+    // Snap the dragged vertical edge.
+    if (xMatch) {
+      const oldWidth = data.width;
+
+      data.width = Math.max(
+        40,
+        data.width + (fromWest ? -xMatch.delta : xMatch.delta)
+      );
+
+      // Keep the opposite edge anchored, including at minimum width.
+      const appliedDelta = fromWest
+        ? oldWidth - data.width
+        : data.width - oldWidth;
+
+      data.x += appliedDelta / 2;
+    }
+
+    // Snap the dragged horizontal edge.
+    if (yMatch) {
+      const oldHeight = data.height;
+
+      data.height = Math.max(
+        30,
+        data.height + (fromNorth ? -yMatch.delta : yMatch.delta)
+      );
+
+      // Keep the opposite edge anchored, including at minimum height.
+      const appliedDelta = fromNorth
+        ? oldHeight - data.height
+        : data.height - oldHeight;
+
+      data.y += appliedDelta / 2;
+    }
+
+    // Show the matching guides during resize.
+    updateAlignmentGuides(data, xMatch, yMatch);
+
 
     // Update the visible element immediately.
     const element = canvas.querySelector(
