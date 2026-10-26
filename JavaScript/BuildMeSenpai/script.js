@@ -201,7 +201,7 @@ function showAlignmentGuide(guide, position, start, end) {
   }
 }
 
-// Element positions use their centre because of translate(-50%, -50%).
+// Element positions use their center because of translate(-50%, -50%).
 function getElementBounds(data) {
   return {
     left: data.x - data.width / 2,
@@ -213,7 +213,7 @@ function getElementBounds(data) {
   };
 }
 
-// Find the closest edge or centre alignment on one axis.
+// Find the closest edge or center alignment on one axis.
 function findBestAlignment(movingData, axis) {
   const moving = getElementBounds(movingData);
   const movingValues = axis === "x"
@@ -478,17 +478,6 @@ elementType.addEventListener("change", () => {
     editorMode.value === "paragraph"
   );
 });
-
-// Update the header color
-/*
-colorPicker.addEventListener("input", () => {
-  elementConfigs.header.background = colorPicker.value;
-
-  if (activeType === "header") {
-    updateGhost();
-  }
-});
- */
 
 // Helper function for the paragraphHandler
 function applyParagraphTypography() {
@@ -880,21 +869,6 @@ document.addEventListener("mousemove", (event) => {
   }
 
   // MOVE MODE: Keep your existing movement behavior unchanged.
-  /*
-  if (!activeDrag) return;
-
-  const drag = activeDrag;
-
-  const dx = event.clientX - drag.startMouseX;
-  const dy = event.clientY - drag.startMouseY;
-
-  drag.data.x = drag.startX + dx;
-  drag.data.y = drag.startY + dy;
-
-  drag.element.style.left = drag.data.x + "px";
-  drag.element.style.top = drag.data.y + "px";
-
-   */
 
   if (!activeDrag) return;
 
@@ -1003,6 +977,40 @@ document.addEventListener("mouseup", () => {
   updateCanvasHeight();
 });
 
+function deleteSelectedElement() {
+  // Deletion is only allowed in Edit mode.
+  if (editorMode.value !== "edit" || !selectedElementId) {
+    return;
+  }
+
+  const index = project.elements.findIndex(
+    (element) => element.id === selectedElementId
+  );
+
+  if (index === -1) return;
+
+  // Save the element and its original position in the array.
+  const element = { ...project.elements[index] };
+
+  project.elements.splice(index, 1);
+
+  undoStack.push({
+    type: "delete",
+    element,
+    index
+  });
+
+  limitHistory(undoStack);
+  redoStack.length = 0;
+
+  // Clear the selection because that element no longer exists.
+  selectedElementId = null;
+
+  // Rebuild the canvas and hide the selection outline.
+  renderProject();
+}
+
+
 function undoAction() {
   const action = undoStack.pop();
 
@@ -1014,7 +1022,28 @@ function undoAction() {
     );
   }
 
-  if (action.type === "move") {
+  else if (action.type === "delete") {
+    // Restore the deleted element at its original position.
+    project.elements.splice(
+      Math.min(action.index, project.elements.length),
+      0,
+      { ...action.element }
+    );
+
+    // Restore its selection.
+    selectedElementId = action.element.id;
+
+    const restoredElement = project.elements.find(
+      (element) => element.id === selectedElementId
+    );
+
+    if (restoredElement) {
+      activeType = restoredElement.type;
+      activeConfig = elementConfigs[activeType];
+    }
+  }
+
+  else if (action.type === "move") {
     const element = project.elements.find(
       (item) => item.id === action.id
     );
@@ -1025,7 +1054,7 @@ function undoAction() {
     }
   }
 
-  if (action.type === "resize") {
+  else if (action.type === "resize") {
     const element = project.elements.find(
       (item) => item.id === action.id
     );
@@ -1035,21 +1064,11 @@ function undoAction() {
     }
   }
 
-  if (action.type === "property") {
-    const element = project.elements.find(
-      (item) => item.id === action.id
-    );
-
-    if (element) {
-      element[action.property] = action.before;
-    }
-  }
-
-
   redoStack.push(action);
   limitHistory(redoStack);
   renderProject();
   syncTypographyControls();
+
 }
 
 function redoAction() {
@@ -1061,7 +1080,17 @@ function redoAction() {
     project.elements.push({ ...action.element });
   }
 
-  if (action.type === "move") {
+  else if (action.type === "delete") {
+    project.elements = project.elements.filter(
+      (element) => element.id !== action.element.id
+    );
+
+    if (selectedElementId === action.element.id) {
+      selectedElementId = null;
+    }
+  }
+
+  else if (action.type === "move") {
     const element = project.elements.find(
       (item) => item.id === action.id
     );
@@ -1072,7 +1101,7 @@ function redoAction() {
     }
   }
 
-  if (action.type === "resize") {
+  else if (action.type === "resize") {
     const element = project.elements.find(
       (item) => item.id === action.id
     );
@@ -1082,21 +1111,11 @@ function redoAction() {
     }
   }
 
-  if (action.type === "property") {
-    const element = project.elements.find(
-      (item) => item.id === action.id
-    );
-
-    if (element) {
-      element[action.property] = action.after;
-    }
-  }
-
-
   undoStack.push(action);
   limitHistory(undoStack);
   renderProject();
   syncTypographyControls();
+
 }
 
 document.addEventListener("keydown", (event) => {
@@ -1112,6 +1131,20 @@ document.addEventListener("keydown", (event) => {
   if (isTyping) return;
 
   const modifierPressed = event.ctrlKey || event.metaKey;
+
+  // Delete the selected element only in Edit mode.
+  if (
+    editorMode.value === "edit" &&
+    selectedElementId &&
+    (
+      event.key === "Delete" ||
+      (modifierPressed && key === "x")
+    )
+  ) {
+    event.preventDefault();
+    deleteSelectedElement();
+    return;
+  }
 
   if (!modifierPressed) return;
 
