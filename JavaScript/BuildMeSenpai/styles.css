@@ -82,6 +82,33 @@ body {
   display: none;
 }
 
+
+/* Smart alignment guide overlay */
+#alignment-guide-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10000;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.alignment-guide {
+  position: absolute;
+  display: none;
+  background: #ff3030;
+  pointer-events: none;
+  z-index: 10001;
+}
+
+.vertical-guide {
+  width: 1px;
+}
+
+.horizontal-guide {
+  height: 1px;
+}
+
+
 .resize-handle {
   position: absolute;
   width: 10px;

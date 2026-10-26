@@ -167,6 +167,152 @@ const resizeHandles = {};
 
 canvas.appendChild(selectionOverlay);
 
+
+/* SMART ALIGNMENT GUIDES */
+
+const alignmentGuideOverlay = document.createElement("div");
+alignmentGuideOverlay.id = "alignment-guide-overlay";
+
+const verticalGuide = document.createElement("div");
+verticalGuide.className = "alignment-guide vertical-guide";
+
+const horizontalGuide = document.createElement("div");
+horizontalGuide.className = "alignment-guide horizontal-guide";
+
+alignmentGuideOverlay.append(verticalGuide, horizontalGuide);
+canvas.appendChild(alignmentGuideOverlay);
+
+function hideAlignmentGuides() {
+  verticalGuide.style.display = "none";
+  horizontalGuide.style.display = "none";
+}
+
+function showAlignmentGuide(guide, position, start, end) {
+  guide.style.display = "block";
+
+  if (guide === verticalGuide) {
+    guide.style.left = `${position}px`;
+    guide.style.top = `${start}px`;
+    guide.style.height = `${Math.max(1, end - start)}px`;
+  } else {
+    guide.style.left = `${start}px`;
+    guide.style.top = `${position}px`;
+    guide.style.width = `${Math.max(1, end - start)}px`;
+  }
+}
+
+// Element positions use their centre because of translate(-50%, -50%).
+function getElementBounds(data) {
+  return {
+    left: data.x - data.width / 2,
+    right: data.x + data.width / 2,
+    top: data.y - data.height / 2,
+    bottom: data.y + data.height / 2,
+    centerX: data.x,
+    centerY: data.y
+  };
+}
+
+// Find the closest edge or centre alignment on one axis.
+function findBestAlignment(movingData, axis) {
+  const moving = getElementBounds(movingData);
+  const movingValues = axis === "x"
+    ? [moving.left, moving.centerX, moving.right]
+    : [moving.top, moving.centerY, moving.bottom];
+
+  const threshold = 6;
+  let bestMatch = null;
+
+  for (const targetData of project.elements) {
+    if (targetData.id === movingData.id) continue;
+
+    const target = getElementBounds(targetData);
+    const targetValues = axis === "x"
+      ? [target.left, target.centerX, target.right]
+      : [target.top, target.centerY, target.bottom];
+
+    for (const movingValue of movingValues) {
+      for (const targetValue of targetValues) {
+        const delta = targetValue - movingValue;
+        const distance = Math.abs(delta);
+
+        if (
+          distance <= threshold &&
+          (!bestMatch || distance < bestMatch.distance)
+        ) {
+          bestMatch = {
+            delta,
+            distance,
+            position: targetValue,
+            targetData
+          };
+        }
+      }
+    }
+  }
+
+  return bestMatch;
+}
+
+function updateAlignmentGuides(movingData, xMatch, yMatch) {
+  hideAlignmentGuides();
+
+  if (xMatch) {
+    const moving = getElementBounds(movingData);
+    const target = getElementBounds(xMatch.targetData);
+
+    // Connect the nearest vertical edges when possible.
+    let start;
+    let end;
+
+    if (moving.bottom < target.top) {
+      start = moving.bottom;
+      end = target.top;
+    } else if (target.bottom < moving.top) {
+      start = target.bottom;
+      end = moving.top;
+    } else {
+      start = Math.min(moving.top, target.top);
+      end = Math.max(moving.bottom, target.bottom);
+    }
+
+    showAlignmentGuide(
+      verticalGuide,
+      xMatch.position,
+      start,
+      end
+    );
+  }
+
+  if (yMatch) {
+    const moving = getElementBounds(movingData);
+    const target = getElementBounds(yMatch.targetData);
+
+    // Connect the nearest horizontal edges when possible.
+    let start;
+    let end;
+
+    if (moving.right < target.left) {
+      start = moving.right;
+      end = target.left;
+    } else if (target.right < moving.left) {
+      start = target.right;
+      end = moving.left;
+    } else {
+      start = Math.min(moving.left, target.left);
+      end = Math.max(moving.right, target.right);
+    }
+
+    showAlignmentGuide(
+      horizontalGuide,
+      yMatch.position,
+      start,
+      end
+    );
+  }
+}
+
+
 function selectElement(element) {
   selectedElementId = element.dataset.id;
 
@@ -241,6 +387,10 @@ function updateEditorMode() {
 
   if (mode !== "place") {
     ghostBlock.style.display = "none";
+  }
+
+  if (mode !== "move") {
+    hideAlignmentGuides();
   }
 
   updateGhost();
@@ -730,6 +880,7 @@ document.addEventListener("mousemove", (event) => {
   }
 
   // MOVE MODE: Keep your existing movement behavior unchanged.
+  /*
   if (!activeDrag) return;
 
   const drag = activeDrag;
@@ -742,27 +893,49 @@ document.addEventListener("mousemove", (event) => {
 
   drag.element.style.left = drag.data.x + "px";
   drag.element.style.top = drag.data.y + "px";
-});
 
-/*
-document.addEventListener("mousemove", (event) => {
+   */
+
   if (!activeDrag) return;
 
   const drag = activeDrag;
 
-  // Calculate movement from the original mouse position
+  // Calculate the normal position from the original mouse position.
   const dx = event.clientX - drag.startMouseX;
   const dy = event.clientY - drag.startMouseY;
 
   drag.data.x = drag.startX + dx;
   drag.data.y = drag.startY + dy;
 
-  drag.element.style.left = drag.data.x + "px";
-  drag.element.style.top = drag.data.y + "px";
+  // Only use smart guides in Move mode.
+  if (editorMode.value === "move") {
+    const xMatch = findBestAlignment(drag.data, "x");
+    const yMatch = findBestAlignment(drag.data, "y");
+
+    // Snap the element into exact alignment.
+    if (xMatch) {
+      drag.data.x += xMatch.delta;
+    }
+
+    if (yMatch) {
+      drag.data.y += yMatch.delta;
+    }
+
+    // Show guides for the active alignment(s).
+    updateAlignmentGuides(drag.data, xMatch, yMatch);
+  } else {
+    hideAlignmentGuides();
+  }
+
+  // Render the updated position.
+  drag.element.style.left = `${drag.data.x}px`;
+  drag.element.style.top = `${drag.data.y}px`;
 });
- */
 
 document.addEventListener("mouseup", () => {
+
+  hideAlignmentGuides();
+
   // Finish resizing.
   if (activeResize) {
     const resize = activeResize;
