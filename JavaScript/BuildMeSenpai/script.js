@@ -798,34 +798,63 @@ let activeDrag = null;
 canvas.addEventListener("mousedown", (event) => {
   // Edit mode: resize using a corner handle.
   if (editorMode.value === "edit") {
+    // 1. KEEP your existing resize-handle code here.
     const handle = event.target.closest(".resize-handle");
 
-    if (!handle || !selectedElementId) return;
+    if (handle && selectedElementId) {
+      const data = project.elements.find(
+        (item) => item.id === selectedElementId
+      );
+
+      if (!data) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      activeResize = {
+        id: data.id,
+        corner: handle.dataset.corner,
+        startMouseX: event.clientX,
+        startMouseY: event.clientY,
+        before: {
+          x: data.x,
+          y: data.y,
+          width: data.width,
+          height: data.height
+        }
+      };
+
+      return;
+    }
+
+    // 2. NEW: Start moving an element in Edit mode.
+    const element = event.target.closest(".element");
+    if (!element) return;
 
     const data = project.elements.find(
-      (item) => item.id === selectedElementId
+      (item) => item.id === element.dataset.id
     );
 
     if (!data) return;
 
-    event.preventDefault();
-    event.stopPropagation();
+    /* Update selected element and selectionoverlay properly */
+    selectedElementId = data.id;
+    updateSelectionOverlay();
 
-    activeResize = {
-      id: data.id,
-      corner: handle.dataset.corner,
+    event.preventDefault();
+
+    activeDrag = {
+      data,
+      element,
       startMouseX: event.clientX,
       startMouseY: event.clientY,
-      before: {
-        x: data.x,
-        y: data.y,
-        width: data.width,
-        height: data.height
-      }
+      startX: data.x,
+      startY: data.y
     };
 
     return;
   }
+
 
   if (editorMode.value !== "move") return;
 
@@ -969,7 +998,10 @@ document.addEventListener("mousemove", (event) => {
   drag.data.y = drag.startY + dy;
 
   // Only use smart guides in Move mode.
-  if (editorMode.value === "move") {
+  if (
+    editorMode.value === "move" ||
+    editorMode.value === "edit"
+  ) {
     const xMatch = findBestAlignment(drag.data, "x");
     const yMatch = findBestAlignment(drag.data, "y");
 
@@ -991,6 +1023,7 @@ document.addEventListener("mousemove", (event) => {
   // Render the updated position.
   drag.element.style.left = `${drag.data.x}px`;
   drag.element.style.top = `${drag.data.y}px`;
+  updateSelectionOverlay();
 });
 
 document.addEventListener("mouseup", () => {
