@@ -59,6 +59,27 @@ editorMode.addEventListener("change", () => {
   updateEditorMode();
 });
 
+const toggleSmartGuidesButton = document.getElementById(
+  "toggle-smart-guides"
+);
+
+toggleSmartGuidesButton.addEventListener("click", () => {
+  smartGuidesEnabled = !smartGuidesEnabled;
+
+  toggleSmartGuidesButton.textContent = smartGuidesEnabled
+    ? "Smart Guides: On"
+    : "Smart Guides: Off";
+
+  toggleSmartGuidesButton.setAttribute(
+    "aria-pressed",
+    String(smartGuidesEnabled)
+  );
+
+  if (!smartGuidesEnabled) {
+    hideAlignmentGuides();
+  }
+});
+
 // Configuration for each type of element
 const elementConfigs = {
   header: {
@@ -150,6 +171,7 @@ let selectedElementId = null;
 let activeResize = null;
 let selectedElement = null;
 let selectedElementData = null;
+let smartGuidesEnabled = true;
 
 selectionOverlay.id = "selection-overlay";
 selectionOverlay.hidden = true;
@@ -925,8 +947,13 @@ document.addEventListener("mousemove", (event) => {
     const xEdge = fromWest ? "left" : "right";
     const yEdge = fromNorth ? "top" : "bottom";
 
-    const xMatch = findBestResizeAlignment(data, "x", xEdge);
-    const yMatch = findBestResizeAlignment(data, "y", yEdge);
+    const xMatch = smartGuidesEnabled
+      ? findBestResizeAlignment(data, "x", xEdge)
+      : null;
+
+    const yMatch = smartGuidesEnabled
+      ? findBestResizeAlignment(data, "y", yEdge)
+      : null;
 
     // Snap the dragged vertical edge.
     if (xMatch) {
@@ -963,7 +990,11 @@ document.addEventListener("mousemove", (event) => {
     }
 
     // Show the matching guides during resize.
-    updateAlignmentGuides(data, xMatch, yMatch);
+    if (smartGuidesEnabled) {
+      updateAlignmentGuides(data, xMatch, yMatch);
+    } else {
+      hideAlignmentGuides();
+    }
 
 
     // Update the visible element immediately.
@@ -999,8 +1030,11 @@ document.addEventListener("mousemove", (event) => {
 
   // Only use smart guides in Move mode.
   if (
-    editorMode.value === "move" ||
-    editorMode.value === "edit"
+    smartGuidesEnabled &&
+    (
+      editorMode.value === "move" ||
+      editorMode.value === "edit"
+    )
   ) {
     const xMatch = findBestAlignment(drag.data, "x");
     const yMatch = findBestAlignment(drag.data, "y");
