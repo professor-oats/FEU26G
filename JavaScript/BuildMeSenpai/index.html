@@ -36,6 +36,45 @@
       <option value="32">32 px</option>
       <option value="40">40 px</option>
     </select>
+    <div id="padding-controls" hidden>
+      <h3>Paragraph Padding</h3>
+
+      <div class="padding-control-row">
+        <label for="padding-x">Horizontal (X):</label>
+        <input
+          type="range"
+          id="padding-x"
+          min="0"
+          max="100"
+          step="1"
+          value="10"
+        >
+        <output id="padding-x-value" for="padding-x">10 px</output>
+      </div>
+
+      <div class="padding-control-row">
+        <label for="padding-y">Vertical (Y):</label>
+        <input
+          type="range"
+          id="padding-y"
+          min="0"
+          max="100"
+          step="1"
+          value="8"
+        >
+        <output id="padding-y-value" for="padding-y">8 px</output>
+      </div>
+
+      <label for="padding-css">CSS padding:</label>
+      <textarea
+        id="padding-css"
+        rows="2"
+        spellcheck="false"
+      >padding: 8px 10px;</textarea>
+
+      <button id="apply-padding-css" type="button">Apply CSS</button>
+      <span id="padding-css-error" role="status" aria-live="polite"></span>
+    </div>
     <label for="element-type">Element:</label>
     <select id="element-type">
       <option value="header">Header</option>
@@ -75,6 +114,9 @@
     </select>
 
     <button id="restore-project">Restore Version</button>
+    <button id="toggle-smart-guides" type="button" aria-pressed="true">
+      Smart Guides: On
+    </button>
   </div>
   <main id="website-canvas">
     <div id="ghost-block"></div>

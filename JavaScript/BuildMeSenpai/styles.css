@@ -195,3 +195,55 @@ body {
   cursor: pointer;
   padding: 5px 10px;
 }
+
+#padding-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 260px;
+  max-width: 340px;
+  padding: 12px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background: #fff;
+}
+
+#padding-controls[hidden] {
+  display: none !important;
+}
+
+#padding-controls h3 {
+  font-size: 15px;
+}
+
+.padding-control-row {
+  display: grid;
+  grid-template-columns: 110px minmax(70px, 1fr) 45px;
+  align-items: center;
+  gap: 6px;
+}
+
+.padding-control-row input[type="range"] {
+  width: 100%;
+  min-width: 0;
+}
+
+#padding-css {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px;
+  font-family: monospace;
+  resize: vertical;
+}
+
+#apply-padding-css {
+  align-self: flex-start;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+
+#padding-css-error {
+  font-size: 12px;
+  color: #b00020;
+}
+

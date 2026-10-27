@@ -15,13 +15,24 @@ const gradientEnd = document.getElementById("gradient-end");
 const gradientDirection = document.getElementById("gradient-direction");
 const selectionOverlay = document.getElementById("selection-overlay");
 
+const paddingControls = document.getElementById("padding-controls");
+const paddingX = document.getElementById("padding-x");
+const paddingY = document.getElementById("padding-y");
+const paddingXValue = document.getElementById("padding-x-value");
+const paddingYValue = document.getElementById("padding-y-value");
+const paddingCss = document.getElementById("padding-css");
+const applyPaddingCssButton = document.getElementById("apply-padding-css");
+const paddingCssError = document.getElementById("padding-css-error");
+
 // EVENT LISTENERS
 backgroundType.addEventListener("change", updateBackgroundControls);
-//colorPicker.addEventListener("input", updateBackground);
 gradientStart.addEventListener("input", updateBackground);
 gradientEnd.addEventListener("input", updateBackground);
 gradientDirection.addEventListener("change", updateBackgroundControls);
-//editorMode.addEventListener("change", updateEditorMode);
+
+paddingX.addEventListener("input", handlePaddingXChange);
+paddingY.addEventListener("input", handlePaddingYChange);
+applyPaddingCssButton.addEventListener("click", handleApplyPaddingCss);
 
 colorPicker.addEventListener("input", () => {
   if (editorMode.value === "paragraph") {
@@ -57,6 +68,7 @@ editorMode.addEventListener("change", () => {
   );
 
   updateEditorMode();
+  updateToolbarForSelection();
 });
 
 const toggleSmartGuidesButton = document.getElementById(
@@ -96,7 +108,13 @@ const elementConfigs = {
     height: 100,
     background: "transparent",
     color: "#000000",
-    editableProperties: ["color", "fontFamily", "fontSize", "text"]
+    editableProperties: [
+      "color",
+      "fontFamily",
+      "fontSize",
+      "text",
+      "padding"
+    ]
   },
 
   image: {
@@ -142,6 +160,36 @@ const savedVersions = document.getElementById("saved-versions");
 const restoreButton = document.getElementById("restore-project");
 
 
+// Helper function to get dynamic for Paragraph Height
+function measureParagraphHeight(data) {
+  const measure = document.createElement("div");
+
+  measure.style.position = "absolute";
+  measure.style.visibility = "hidden";
+  measure.style.left = "-100000px";
+  measure.style.top = "0";
+  measure.style.width = `${data.width}px`;
+  measure.style.boxSizing = "border-box";
+  measure.style.fontFamily = data.fontFamily || "Arial";
+  measure.style.fontSize = `${data.fontSize || 16}px`;
+  measure.style.lineHeight = "1.5";
+  measure.style.overflowWrap = "break-word";
+  measure.style.whiteSpace = "pre-wrap";
+
+  const p = getParagraphPadding(data);
+  measure.style.padding =
+    `${p.top}px ${p.right}px ${p.bottom}px ${p.left}px`;
+
+  measure.textContent = data.text || "";
+  document.body.appendChild(measure);
+
+  const height = measure.scrollHeight;
+  measure.remove();
+
+  return height;
+}
+
+
 function renderElement(data) {
   const config = elementConfigs[data.type];
   const element = document.createElement("div");
@@ -152,7 +200,10 @@ function renderElement(data) {
   element.style.left = data.x + "px";
   element.style.top = data.y + "px";
   element.style.width = data.width + "px";
-  element.style.height = data.height + "px";
+  element.style.height =
+    data.type === "text"
+      ? `${measureParagraphHeight(data)}px`
+      : `${data.height}px`;
   element.style.background = data.background;
   element.style.transform = "translate(-50%, -50%)";
 
@@ -161,15 +212,49 @@ function renderElement(data) {
     element.style.fontSize = `${data.fontSize || 16}px`;
     element.style.color = data.color || "#000000";
     element.style.background = "transparent";
+
+    const p = getParagraphPadding(data);
+    element.style.padding =
+      `${p.top}px ${p.right}px ${p.bottom}px ${p.left}px`;
+
     element.textContent = data.text || "";
   }
 
   canvas.appendChild(element);
 }
 
+function updateRenderedTextElement(data) {
+  // Find only the existing DOM element we want to update.
+  const element = Array.from(
+    canvas.querySelectorAll(".element")
+  ).find((item) => item.dataset.id === data.id);
+
+  // If the element is missing, safely fall back to a full render.
+  if (!element) {
+    renderProject();
+    return;
+  }
+
+  if (data.type !== "text") return;
+
+  // Apply the current padding.
+  const p = getParagraphPadding(data);
+
+  element.style.padding =
+    `${p.top}px ${p.right}px ${p.bottom}px ${p.left}px`;
+
+  // Recalculate only this paragraph's height.
+  data.height = measureParagraphHeight(data);
+  element.style.height = `${data.height}px`;
+
+  // Refresh related editor UI without rebuilding the canvas.
+  updateCanvasHeight();
+  updateSelectionOverlay();
+}
+
 let selectedElementId = null;
 let activeResize = null;
-let selectedElement = null;
+let selectedElement = null;  // unused for now
 let selectedElementData = null;
 let smartGuidesEnabled = true;
 
@@ -375,7 +460,7 @@ function updateAlignmentGuides(movingData, xMatch, yMatch) {
   }
 }
 
-
+/*
 function selectElement(element) {
   selectedElementId = element.dataset.id;
 
@@ -394,6 +479,30 @@ function selectElement(element) {
     paragraphFontSize.value = String(data.fontSize || 16);
   }
 
+  updateSelectionOverlay();
+}
+ */
+
+function selectElement(element) {
+  selectedElementId = element.dataset.id;
+
+  const data = project.elements.find(
+    (item) => item.id === selectedElementId
+  );
+
+  if (!data) return;
+
+  selectedElementData = data;
+  activeType = data.type;
+  activeConfig = elementConfigs[activeType];
+
+  if (data.type === "text") {
+    fontFamily.value = data.fontFamily || "Arial";
+    paragraphFontSize.value = String(data.fontSize || 16);
+    syncPaddingControls(data);
+  }
+
+  updateToolbarForSelection();
   updateSelectionOverlay();
 }
 
@@ -458,8 +567,10 @@ function updateEditorMode() {
 
   updateGhost();
   updateSelectionOverlay();
+  updateToolbarForSelection();
 }
 
+/*
 function updateToolbarForSelection() {
   if (!selectedElementData || !activeConfig) return;
 
@@ -471,6 +582,184 @@ function updateToolbarForSelection() {
   fontSizeControls.hidden = !editable.includes("fontSize");
   textControls.hidden = !editable.includes("text");
 }
+ */
+
+// Helper functions for padding updates in toolbar
+
+
+function getParagraphPadding(data) {
+  return {
+    top: data.paddingTop ?? data.paddingY ?? 8,
+    right: data.paddingRight ?? data.paddingX ?? 10,
+    bottom: data.paddingBottom ?? data.paddingY ?? 8,
+    left: data.paddingLeft ?? data.paddingX ?? 10
+  };
+}
+
+function formatPaddingCss(data) {
+  const p = getParagraphPadding(data);
+  return `padding: ${p.top}px ${p.right}px ${p.bottom}px ${p.left}px;`;
+}
+
+function parsePaddingCss(css) {
+  const match = css.trim().match(
+    /^padding\s*:\s*(.*?)\s*;?$|^(.*?)\s*;?$/
+  );
+
+  if (!match) return null;
+
+  const value = (match[1] ?? match[2] ?? "").trim();
+  if (!value) return null;
+
+  const parts = value.split(/\s+/);
+
+  if (parts.length < 1 || parts.length > 4) return null;
+
+  const values = parts.map((part) => {
+    const number = part.match(/^(\d+(?:\.\d+)?|\.\d+)px$/i);
+    return number ? Number(number[1]) : NaN;
+  });
+
+  if (values.some((value) =>
+    !Number.isFinite(value) || value < 0 || value > 1000
+  )) {
+    return null;
+  }
+
+  let top, right, bottom, left;
+
+  if (values.length === 1) {
+    [top] = values;
+    right = bottom = left = top;
+  } else if (values.length === 2) {
+    [top, right] = values;
+    bottom = top;
+    left = right;
+  } else if (values.length === 3) {
+    [top, right, bottom] = values;
+    left = right;
+  } else {
+    [top, right, bottom, left] = values;
+  }
+
+  return { top, right, bottom, left };
+}
+
+function syncPaddingControls(data) {
+  const p = getParagraphPadding(data);
+
+  paddingX.value = String(Math.round((p.left + p.right) / 2));
+  paddingY.value = String(Math.round((p.top + p.bottom) / 2));
+
+  paddingXValue.textContent =
+    p.left === p.right
+      ? `${p.left} px`
+      : `${p.left} / ${p.right} px`;
+
+  paddingYValue.textContent =
+    p.top === p.bottom
+      ? `${p.top} px`
+      : `${p.top} / ${p.bottom} px`;
+
+  paddingCss.value = formatPaddingCss(data);
+  paddingCssError.textContent = "";
+}
+
+// Helper functions to apply padding via toolbar controls
+
+
+function applySelectedPadding(p) {
+  const data = project.elements.find(
+    (item) => item.id === selectedElementId
+  );
+
+  if (!data || data.type !== "text") return;
+
+  data.paddingTop = p.top;
+  data.paddingRight = p.right;
+  data.paddingBottom = p.bottom;
+  data.paddingLeft = p.left;
+
+  // Keep the original paired values for compatibility.
+  data.paddingX = (p.left + p.right) / 2;
+  data.paddingY = (p.top + p.bottom) / 2;
+
+  updateRenderedTextElement(data);
+
+  selectedElementData = project.elements.find(
+    (item) => item.id === selectedElementId
+  );
+
+  syncPaddingControls(selectedElementData);
+  updateToolbarForSelection();
+}
+
+function handlePaddingXChange() {
+  const x = Number(paddingX.value);
+
+  const p = getParagraphPadding(selectedElementData);
+  p.left = x;
+  p.right = x;
+
+  applySelectedPadding(p);
+}
+
+function handlePaddingYChange() {
+  const y = Number(paddingY.value);
+
+  const p = getParagraphPadding(selectedElementData);
+  p.top = y;
+  p.bottom = y;
+
+  applySelectedPadding(p);
+}
+
+function handleApplyPaddingCss() {
+  const parsed = parsePaddingCss(paddingCss.value);
+
+  if (!parsed) {
+    paddingCssError.textContent =
+      "Enter padding in px, e.g. padding: 8px 16px;";
+    return;
+  }
+
+  if (
+    !selectedElementData ||
+    selectedElementData.type !== "text"
+  ) {
+    paddingCssError.textContent = "Select a text paragraph first.";
+    return;
+  }
+
+  applySelectedPadding(parsed);
+}
+
+
+function updateToolbarForSelection() {
+  const isEditMode = editorMode.value === "edit";
+  const hasSelection = Boolean(selectedElementData && activeConfig);
+
+  // Hide the padding panel unless a text element is selected in Edit mode.
+  paddingControls.hidden = !(
+    isEditMode &&
+    hasSelection &&
+    selectedElementData.type === "text"
+  );
+
+  // Keep the existing property controls selection-aware.
+  if (!hasSelection) {
+    return;
+  }
+
+  const editable = activeConfig.editableProperties;
+
+  backgroundControls.hidden = !editable.includes("background");
+  colorControls.hidden = !editable.includes("color");
+  fontFamilyControls.hidden = !editable.includes("fontFamily");
+  fontSizeControls.hidden = !editable.includes("fontSize");
+  textControls.hidden = !editable.includes("text");
+}
+
 
 // This function will update background and update ghost for all elements that support
 // background property
@@ -681,7 +970,9 @@ function beginParagraphDraft(event) {
       fontFamily: fontFamily.value,
       fontSize: Number(paragraphFontSize.value),
       background: "transparent",
-      color: colorPicker.value
+      color: colorPicker.value,
+      paddingX: 10,
+      paddingY: 8
     };
 
     draft.remove();
