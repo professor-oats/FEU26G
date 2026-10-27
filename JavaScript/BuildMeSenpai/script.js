@@ -223,6 +223,7 @@ function renderElement(data) {
   canvas.appendChild(element);
 }
 
+/*
 function updateRenderedTextElement(data) {
   // Find only the existing DOM element we want to update.
   const element = Array.from(
@@ -251,6 +252,110 @@ function updateRenderedTextElement(data) {
   updateCanvasHeight();
   updateSelectionOverlay();
 }
+ */
+
+
+function updateRenderedElement(data, changedProperties = null) {
+  const element = Array.from(
+    canvas.querySelectorAll(".element")
+  ).find((item) => item.dataset.id === data.id);
+
+  // Recovery path if the element is missing from the canvas.
+  if (!element) {
+    renderProject();
+    return;
+  }
+
+  const updateAll = changedProperties === null;
+  const changed = (property) =>
+    updateAll || changedProperties.includes(property);
+
+  const isText = data.type === "text";
+
+  const affectsTextLayout =
+    isText &&
+    (
+      changed("size") ||
+      changed("width") ||
+      changed("fontSize") ||
+      changed("fontFamily") ||
+      changed("text") ||
+      changed("padding")
+    );
+
+  // Position
+  if (changed("position")) {
+    element.style.left = `${data.x}px`;
+    element.style.top = `${data.y}px`;
+  }
+
+  // Size
+  if (changed("size") || changed("width")) {
+    element.style.width = `${data.width}px`;
+  }
+
+  if (isText && affectsTextLayout) {
+    data.height = measureParagraphHeight(data);
+    element.style.height = `${data.height}px`;
+  } else if (!isText && (changed("size") || changed("height"))) {
+    element.style.height = `${data.height}px`;
+  }
+
+  // Background
+  if (changed("background")) {
+    element.style.background = data.background;
+
+    // Text paragraphs keep a transparent background.
+    if (isText) {
+      element.style.background = "transparent";
+    }
+  }
+
+  // Text-specific appearance
+  if (isText) {
+    if (changed("color")) {
+      element.style.color = data.color || "#000000";
+    }
+
+    if (changed("fontFamily")) {
+      element.style.fontFamily = data.fontFamily || "Arial";
+    }
+
+    if (changed("fontSize")) {
+      element.style.fontSize = `${data.fontSize || 16}px`;
+    }
+
+    if (changed("padding")) {
+      const p = getParagraphPadding(data);
+
+      element.style.padding =
+        `${p.top}px ${p.right}px ${p.bottom}px ${p.left}px`;
+    }
+
+    if (changed("text")) {
+      element.textContent = data.text || "";
+    }
+  }
+
+  // Only refresh canvas geometry when dimensions may have changed.
+  if (
+    changed("size") ||
+    changed("width") ||
+    changed("height") ||
+    affectsTextLayout
+  ) {
+    updateCanvasHeight();
+    updateSelectionOverlay();
+  } else if (changed("position")) {
+    updateSelectionOverlay();
+  }
+}
+
+// Keep the old function name temporarily so existing callers still work.
+function updateRenderedTextElement(data) {
+  updateRenderedElement(data, ["padding"]);
+}
+
 
 let selectedElementId = null;
 let activeResize = null;
@@ -839,7 +944,6 @@ function applyParagraphTypography() {
 
   textarea.style.fontFamily = fontFamily.value;
   textarea.style.fontSize = `${paragraphFontSize.value}px`;
-  //textarea.style.color = colorPicker.value;
 }
 
 function syncTypographyControls() {
