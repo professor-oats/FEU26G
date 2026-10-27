@@ -1601,6 +1601,37 @@ function deleteSelectedElement() {
   renderProject();
 }
 
+// Helper function for undo history
+
+function refreshAfterHistoryAction(action) {
+  // Adding or removing elements changes the canvas structure.
+  if (action.type === "place" || action.type === "delete") {
+    renderProject();
+    return;
+  }
+
+  const element = project.elements.find(
+    (item) => item.id === action.id
+  );
+
+  if (!element) {
+    renderProject();
+    return;
+  }
+
+  if (action.type === "property") {
+    updateRenderedElement(element, [action.property]);
+  }
+
+  else if (action.type === "move") {
+    updateRenderedElement(element, ["position"]);
+  }
+
+  else if (action.type === "resize") {
+    updateRenderedElement(element, ["position", "size"]);
+  }
+}
+
 
 function undoAction() {
   const action = undoStack.pop();
@@ -1668,7 +1699,7 @@ function undoAction() {
 
   redoStack.push(action);
   limitHistory(redoStack);
-  renderProject();
+  refreshAfterHistoryAction(action);
   syncTypographyControls();
 
 }
@@ -1712,7 +1743,7 @@ function redoAction() {
       Object.assign(element, action.after);
     }
   }
-  
+
   else if (action.type === "property") {
     const element = project.elements.find(
       (item) => item.id === action.id
@@ -1726,7 +1757,7 @@ function redoAction() {
 
   undoStack.push(action);
   limitHistory(undoStack);
-  renderProject();
+  refreshAfterHistoryAction(action);
   syncTypographyControls();
 
 }
