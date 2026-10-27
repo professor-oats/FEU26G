@@ -254,7 +254,7 @@ function updateRenderedTextElement(data) {
 }
  */
 
-
+// Targeted render of element
 function updateRenderedElement(data, changedProperties = null) {
   const element = Array.from(
     canvas.querySelectorAll(".element")
@@ -957,7 +957,7 @@ function syncTypographyControls() {
   paragraphFontSize.value = String(data.fontSize || 16);
 }
 
-
+/*
 function updateSelectedParagraphProperty(property, value) {
   if (editorMode.value !== "edit" || !selectedElementId) {
     return;
@@ -1007,6 +1007,48 @@ function updateSelectedParagraphProperty(property, value) {
   // A new edit clears the redo history.
   redoStack.length = 0;
 }
+ */
+
+
+function updateSelectedParagraphProperty(property, value) {
+  if (editorMode.value !== "edit" || !selectedElementId) {
+    return;
+  }
+
+  const data = project.elements.find(
+    (item) => item.id === selectedElementId
+  );
+
+  if (!data || data.type !== "text") {
+    return;
+  }
+
+  const before = data[property];
+
+  // Ignore changes that don't actually change the value.
+  if (before === value) return;
+
+  // Update the project data.
+  data[property] = value;
+
+  // Update only the affected properties in the existing DOM element.
+  updateRenderedElement(data, [property]);
+
+  // Record the change so it can be undone and redone.
+  undoStack.push({
+    type: "property",
+    id: data.id,
+    property,
+    before,
+    after: value
+  });
+
+  limitHistory(undoStack);
+
+  // A new edit clears the redo history.
+  redoStack.length = 0;
+}
+
 
 
 // Start of ParagraphHandler
@@ -1613,6 +1655,17 @@ function undoAction() {
     }
   }
 
+  else if (action.type === "property") {
+    const element = project.elements.find(
+      (item) => item.id === action.id
+    );
+
+    if (element) {
+      element[action.property] = action.before;
+    }
+  }
+
+
   redoStack.push(action);
   limitHistory(redoStack);
   renderProject();
@@ -1659,6 +1712,17 @@ function redoAction() {
       Object.assign(element, action.after);
     }
   }
+  
+  else if (action.type === "property") {
+    const element = project.elements.find(
+      (item) => item.id === action.id
+    );
+
+    if (element) {
+      element[action.property] = action.after;
+    }
+  }
+
 
   undoStack.push(action);
   limitHistory(undoStack);
