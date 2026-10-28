@@ -1,0 +1,236 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: #101a29;
+}
+
+#container-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0px;
+  margin: 20px auto;
+  max-width: 1000px;
+  width: 100%;
+}
+
+#demo {
+  color: green;
+  font-size: 20px;
+  border: 1px solid green;
+  background: black;
+  padding: 10px;
+}
+
+/* Pin the coffee icon to absolute dead center, immune to space-between shifts */
+#container-content .fa-coffee {
+  position: absolute;
+  left: 49%;
+  transform: translateX(-48%);
+  pointer-events: none; /* Ensures it doesn't block clicks to elements underneath if they overlap */
+}
+
+h1 {
+  text-align: center;
+  font-size: 5em;
+}
+
+h2 {
+  font-size: 4em;
+}
+
+a {
+  text-decoration: none;
+}
+
+table {
+  color: greenyellow;
+  background: black;
+  border: 1px solid green;
+  font-size: 1.5em;
+  margin-top: 0.6em;
+}
+
+td, th {
+  border: 1px solid green;
+  text-align: left;
+  padding: 8px;
+}
+
+.center-me {
+  text-align: center;
+  position: relative;
+  left: 50%;
+  right: 50%;
+  transform: translateX(-50%)
+}
+
+.border-me {
+  border: 3px dashed greenyellow;
+  max-width: 1200px;
+  padding-top: 20px;
+  padding-bottom: 20px;
+}
+
+/* Randeep Dhaliwal @ codepen */
+.border-me-madness {
+  max-width: 1200px;
+  background: linear-gradient(90deg, greenyellow 50%, transparent 50%),
+  linear-gradient(90deg, greenyellow 50%, transparent 50%),
+  linear-gradient(0deg, greenyellow 50%, transparent 50%),
+  linear-gradient(0deg, greenyellow 50%, transparent 50%);
+  background-repeat: repeat-x, repeat-x, repeat-y, repeat-y;
+  background-size: 16px 4px, 16px 4px, 4px 16px, 4px 16px;
+  background-position: 0% 0%, 100% 100%, 0% 100%, 100% 0px;
+  border-radius: 3px;
+  padding: 10px;
+  animation: dash 10s linear infinite;
+}
+
+@keyframes dash {
+  to {
+    background-position: 100% 0%, 0% 100%, 0% 0%, 100% 100%;
+  }
+}
+
+/* Randeep Dhaliwal @ codepen - Adjusted for uniform velocity */
+.border-me-madness-uniform {
+  max-width: 1200px;
+  background: linear-gradient(90deg, greenyellow 50%, transparent 50%),
+  linear-gradient(90deg, greenyellow 50%, transparent 50%),
+  linear-gradient(0deg, greenyellow 50%, transparent 50%),
+  linear-gradient(0deg, greenyellow 50%, transparent 50%);
+  background-repeat: repeat-x, repeat-x, repeat-y, repeat-y;
+  background-size: 16px 4px, 16px 4px, 4px 16px, 4px 16px;
+  background-position: 0% 0%, 100% 100%, 0% 100%, 100% 0px;
+  border-radius: 3px;
+  padding-top: 20px;
+  padding-bottom: 40px;
+  /* Reduced duration because we are shifting by 16px instead of the whole box width */
+  animation: dash-uniform 1s linear infinite;
+}
+
+@keyframes dash-uniform {
+  to {
+    /* Shifts each side by its 16px repeat pattern in its respective direction */
+    background-position: 16px 0px, calc(100% - 16px) 100%, 0px calc(100% - 16px), 100% 16px;
+  }
+}
+
+.i-am-yellowish {
+  color: goldenrod;
+}
+.i-am-white {
+  color: white;
+}
+
+.shimmer-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.25rem;
+}
+
+/* Shimmer from purecss - https://purecss.com/examples/text-shimmer/ */
+/* inline-block gives the gradient a box to sweep across */
+.shimmer {
+  /* display: inline-block; */
+  background-size: 300% auto;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer-sweep 2s linear infinite;
+}
+
+.shimmer-green {
+  font-size: 2rem;
+  font-weight: 800;
+  background-image: linear-gradient(90deg,
+  #f0f0f0 0%,
+  #b8ff57 30%,
+  #57d9a3 50%,
+  #b8ff57 70%,
+  #f0f0f0 100%
+  );
+}
+
+.shimmer-gold {
+  /* font-size: 1.4rem; */
+  /* font-weight: 700; */
+  background-image: linear-gradient(90deg,
+  #88888f 0%,
+  #ffd444 30%,
+  #ff9040 50%,
+  #ffd444 70%,
+  #88888f 100%
+  );
+  animation-duration: 10s;
+}
+
+.shimmer-rainbow {
+  font-size: 1.1rem;
+  font-weight: 600;
+  background-image: linear-gradient(90deg,
+  #ff6b6b 0%,
+  #ffd444 20%,
+  #b8ff57 40%,
+  #38bdf8 60%,
+  #c084fc 80%,
+  #ff6b6b 100%
+  );
+  background-size: 300% auto;
+  animation-duration: 3s;
+}
+
+.shimmer-mono {
+  font-family: "DM Mono", "Fira Code", Consolas, monospace;
+  font-size: .95rem;
+  font-weight: 500;
+  background-image: linear-gradient(90deg,
+  #88888f 0%,
+  #f0f0f0 50%,
+  #88888f 100%
+  );
+  animation-duration: 1.5s;
+}
+
+@keyframes shimmer-sweep {
+  from { background-position: 200% center; }
+  to   { background-position: -200% center; }
+}
+
+.theme-login-btn {
+  background-color: transparent;
+  color: greenyellow;
+  border: 2px dashed greenyellow;
+  padding: 8px 16px;
+  font-size: 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.theme-login-btn:hover {
+  background-color: greenyellow;
+  color: black;
+}
+
+#login-modal input {
+  padding: 6px;
+  margin-right: 5px;
+  border-radius: 4px;
+  border: 1px solid #ccc;
+}
+
+#login-submit-btn {
+  padding: 6px 12px;
+  background-color: greenyellow;
+  border: none;
+  font-weight: bold;
+  cursor: pointer;
+  border-radius: 4px;
+}

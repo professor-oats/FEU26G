@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="ie=edge">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
+  <title>MoneyMe Menu</title>
+  <script src="script.js" defer></script>
+</head>
+<body>
+  <h1 class="center-me i-am-yellowish">Dagens Meny Broooor</h1>
+  <div class="center-me border-me-madness-uniform">
+    <div id="container-content">
+      <p id="demo"></p>
+      <i class="fa fa-coffee" style="font-size:48px;color:red"></i>
+      <div class="" style="margin: 20px 0;">
+        <button id="login-toggle-btn" class="theme-login-btn">Kassa Login</button>
+      </div>
+      <div id="search-group" class="search-group" style="display: none;">
+        <label for="search-bar"></label>
+        <input type="search" id="search-bar" name="q" placeholder="Sök artikel"/>
+        <button id="search-button">Search</button>
+      </div>
+    </div>
+
+    <div id="login-modal" class="center-me" style="display: none; margin-bottom: 20px;">
+      <input type="text" id="login-user" placeholder="Användarnamn" />
+      <input type="password" id="login-pass" placeholder="Lösenord" />
+      <button id="login-submit-btn">Logga in</button>
+    </div>
+
+    <div id="cashier-gated-content" style="display: none;">
+      <table id="money-menu" class="center-me">
+        <tr>
+          <th>Artikel</th>
+          <th>Pris SEK</th>
+          <th>I lager</th>
+          <th>Kategori</th>
+        </tr>
+        <tr>
+          <td>Alfreds Futterkiste</td>
+          <td>Maria Anders</td>
+          <td>Germany</td>
+          <td>Sweden</td>
+        </tr>
+        <tr>
+          <td>Centro comercial Moctezuma</td>
+          <td>Francisco Chang</td>
+          <td>Mexico</td>
+          <td>Germany</td>
+        </tr>
+      </table>
+      <div id="add-article" class="center-me" style="margin-top: 20px;">
+        <label class="i-am-white" for="add-article" style="display: block; text-align: left; padding-left: 80px; padding-bottom: 6px;">Lägg till din mamma på menyn här</label>
+        <input type="text" id="new-art-id" placeholder="ID (t.ex. Ka)" />
+        <input type="text" id="new-name" placeholder="Namn" />
+        <input type="number" id="new-price" placeholder="Pris (SEK)" />
+        <input type="number" id="new-quant" placeholder="Antal i lager" />
+        <input type="text" id="new-cat" placeholder="Kategori" />
+        <button id="add-article-btn">Lägg till</button>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
