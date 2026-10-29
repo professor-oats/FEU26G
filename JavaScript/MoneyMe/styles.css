@@ -61,6 +61,10 @@ td, th {
   padding: 8px;
 }
 
+.click-me {
+  cursor: pointer;
+}
+
 .center-me {
   text-align: center;
   position: relative;

@@ -98,10 +98,19 @@ const articleArray = [
 // Assignments
 // Skapa en metod som kan ta in antingen name eller id för att få ut pris på en artikel
 // Handle error och quantity i lager
+// Make sort methods that first click sorts A-Ö and toggle for reverse
+// Make sort that does same for price first lowest-to-highest and toggle
+// Simply put it should render sorted
 
 class ArticleMenu {
   constructor(articles = []) {
     this.articles = articles;
+    this._sortedCache = null;
+    this._isDirty = true;
+
+    // Keep track of sorting state for toggle
+    this._currentSortKey = null;
+    this._sortAscending = true;
   }
 
   getAll() {
@@ -133,6 +142,25 @@ class ArticleMenu {
     return Number(articleById.quantity) > 0 ? articleById.price : console.error("Varan slut bror, ring Maxim");
   }
 
+  /*
+  sortByName() {
+    this.articles.sort((a, b) => {
+      const nameA = a.name.toUpperCase(); // ignore upper and lowercase
+      const nameB = b.name.toUpperCase(); // ignore upper and lowercase
+
+      if (nameA < nameB) {
+        return -1;
+      }
+      if (nameA > nameB) {
+        return 1;
+      }
+
+      // names must be equal
+      return 0;
+    })
+  }
+   */
+
   addEntry(art_id, name, price, quant, cat) {
     const newArticle = {
       id: art_id,
@@ -142,22 +170,81 @@ class ArticleMenu {
       category: cat
     };
     this.articles.push(newArticle);
+    this._isDirty = true;
     this.renderMenu("money-menu");
+  }
+
+  sortBy(key) {
+    // Toggle direction when key is same
+    if (this._currentSortKey === key) {
+      this._sortAscending = !this._sortAscending;
+    }
+    else {
+      // Always start with ascension, A-Ö and lowest to highest
+      this._currentSortKey = key;
+      this._sortAscending = true;
+    }
+
+    this._isDirty = true; // Rebuild cache
+    this.renderMenu("money-menu");
+  }
+
+  getSortedArticles() {
+
+    if (!this._isDirty && this._sortedCache) {
+      return this._sortedCache;
+    }
+
+    // If no SortKey for trigger, return this.articles
+    if (!this._currentSortKey) {
+      return this.articles;
+    }
+
+    // Keep track of direction based on the toggle
+    const key = this._currentSortKey;
+    const direction = this._sortAscending ? 1 : -1;
+
+    // Construct the sorted cache array from this.articles
+    this._sortedCache = [...this.articles].sort((a, b) => {
+      let valA = a[key];
+      let valB = b[key];
+
+      // Ensure sorting strings and strings - No mix bro
+      if (typeof valA === 'string' && typeof valB === 'string') {
+        valA = valA.toUpperCase();
+        valB = valB.toUpperCase();
+        if (valA < valB) return -1 * direction;
+        if (valA > valB) return 1 * direction;
+        return 0;
+      }
+
+      // Handle numeric
+      return (valA - valB) * direction;
+    });
+
+    // Clean and sorted
+    this._isDirty = false;
+    return this._sortedCache;
   }
 
   renderMenu(table_id = "money-menu") {
     const table = document.getElementById(table_id);
+    const articlesToRender = this.getSortedArticles(); // Hämtar cache/sorterat
+
     let html = `
       <tr>
-        <th>Artikel</th>
-        <th>Pris SEK</th>
-        <th>I lager</th>
-        <th>Kategori</th>
+        <th data-sort="id" class="sortable">ID</th>
+        <th data-sort="name" class="sortable">Artikel</th>
+        <th data-sort="price" class="sortable">Pris SEK</th>
+        <th data-sort="quantity" class="sortable">I lager</th>
+        <th data-sort="category" class="sortable">Kategori</th>
       </tr>
     `;
-    this.articles.forEach(article => {
+
+    articlesToRender.forEach(article => {
       html += `
         <tr>
+          <td>${article.id}</td>
           <td>${article.name}</td>
           <td>${article.price}</td>
           <td>${article.quantity}</td>
@@ -170,6 +257,15 @@ class ArticleMenu {
 }
 
 const moneymeMenu = new ArticleMenu(articleArray);
+
+// Make a sortKey from the data-sort in the header tag upon click
+document.addEventListener("click", (e) => {
+  if (e.target.tagName === "TH" && e.target.dataset.sort) {
+    const sortKey = e.target.dataset.sort; // e.g. "name", "price", "id" etc.
+
+    moneymeMenu.sortBy(sortKey);
+  }
+});
 
 /* Start of purchase function */
 /*
