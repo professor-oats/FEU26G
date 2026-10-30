@@ -56,9 +56,6 @@ colorPicker.addEventListener("input", () => {
   }
 });
 
-
-
-
 editorMode.addEventListener("change", () => {
   if (editorMode.value === "paragraph") {
     paragraphDraftPaint = {
@@ -172,7 +169,7 @@ const saveButton = document.getElementById("save-project");
 const savedVersions = document.getElementById("saved-versions");
 const restoreButton = document.getElementById("restore-project");
 
-
+// GENERAL HELPER FUNCTIONS HERE FOR NOW
 // Helper function to get dynamic for Paragraph Height
 function measureParagraphHeight(data) {
   const measure = document.createElement("div");
@@ -202,6 +199,38 @@ function measureParagraphHeight(data) {
   return height;
 }
 
+function createGradientValue(direction, start, end) {
+  return `linear-gradient(${direction}, ${start}, ${end})`;
+}
+
+function isGradientValue(value) {
+  return typeof value === "string" &&
+    value.startsWith("linear-gradient(");
+}
+
+function applyParagraphTextColor(element, data) {
+  let textContent = element.querySelector(".text-content");
+
+  if (!textContent) {
+    textContent = document.createElement("span");
+    textContent.className = "text-content";
+    element.appendChild(textContent);
+  }
+
+  if (isGradientValue(data.color)) {
+    textContent.style.color = "transparent";
+    textContent.style.backgroundImage = data.color;
+    textContent.style.backgroundClip = "text";
+    textContent.style.webkitBackgroundClip = "text";
+    textContent.style.webkitTextFillColor = "transparent";
+  } else {
+    textContent.style.backgroundImage = "none";
+    textContent.style.color = data.color || "#000000";
+    textContent.style.webkitTextFillColor =
+      data.color || "#000000";
+  }
+}
+
 
 function renderElement(data) {
   const config = elementConfigs[data.type];
@@ -213,24 +242,31 @@ function renderElement(data) {
   element.style.left = data.x + "px";
   element.style.top = data.y + "px";
   element.style.width = data.width + "px";
+
   element.style.height =
     data.type === "text"
       ? `${measureParagraphHeight(data)}px`
       : `${data.height}px`;
+
   element.style.background = data.background || "transparent";
   element.style.transform = "translate(-50%, -50%)";
 
   if (data.type === "text") {
     element.style.fontFamily = data.fontFamily || "Arial";
     element.style.fontSize = `${data.fontSize || 16}px`;
-    element.style.color = data.color || "#000000";
-    //element.style.background = "transparent";
 
     const p = getParagraphPadding(data);
+
     element.style.padding =
       `${p.top}px ${p.right}px ${p.bottom}px ${p.left}px`;
 
-    element.textContent = data.text || "";
+    const textContent = document.createElement("span");
+    textContent.className = "text-content";
+    textContent.textContent = data.text || "";
+
+    element.appendChild(textContent);
+
+    applyParagraphTextColor(element, data);
   }
 
   canvas.appendChild(element);
@@ -280,6 +316,7 @@ function updateRenderedElement(data, changedProperties = null) {
   }
 
   const updateAll = changedProperties === null;
+
   const changed = (property) =>
     updateAll || changedProperties.includes(property);
 
@@ -314,17 +351,13 @@ function updateRenderedElement(data, changedProperties = null) {
     element.style.height = `${data.height}px`;
   }
 
-  // Background
+  // Background belongs to the outer element.
   if (changed("background")) {
     element.style.background = data.background || "transparent";
   }
 
-  // Text-specific appearance
+  // Text-specific appearance.
   if (isText) {
-    if (changed("color")) {
-      element.style.color = data.color || "#000000";
-    }
-
     if (changed("fontFamily")) {
       element.style.fontFamily = data.fontFamily || "Arial";
     }
@@ -340,8 +373,24 @@ function updateRenderedElement(data, changedProperties = null) {
         `${p.top}px ${p.right}px ${p.bottom}px ${p.left}px`;
     }
 
+    // Make sure the text span exists.
+    let textContent = element.querySelector(".text-content");
+
+    if (!textContent) {
+      textContent = document.createElement("span");
+      textContent.className = "text-content";
+      element.appendChild(textContent);
+    }
+
+    // Text color belongs to the inner text span.
+    if (changed("color")) {
+      applyParagraphTextColor(element, data);
+      textContent = element.querySelector(".text-content");
+    }
+
+    // Update the actual paragraph text.
     if (changed("text")) {
-      element.textContent = data.text || "";
+      textContent.textContent = data.text || "";
     }
   }
 
@@ -1036,7 +1085,11 @@ function updateBackground() {
     const value =
       backgroundType.value === "solid"
         ? colorPicker.value
-        : `linear-gradient(${gradientDirection.value}, ${gradientStart.value}, ${gradientEnd.value})`;
+        : createGradientValue(
+          gradientDirection.value,
+          gradientStart.value,
+          gradientEnd.value
+        );
 
     updateSelectedElementProperty(property, value);
     return;
@@ -1050,7 +1103,11 @@ function updateBackground() {
     config.background = colorPicker.value;
   } else {
     config.background =
-      `linear-gradient(${gradientDirection.value}, ${gradientStart.value}, ${gradientEnd.value})`;
+      createGradientValue(
+        gradientDirection.value,
+        gradientStart.value,
+        gradientEnd.value
+      );
   }
 
   if (activeType === "header") {
@@ -1112,8 +1169,68 @@ function applyParagraphTypography() {
 
   textarea.style.fontFamily = settings.fontFamily;
   textarea.style.fontSize = `${settings.fontSize}px`;
-  textarea.style.color = settings.color;
-  textarea.style.background = settings.background;
+
+  const textIsGradient = isGradientValue(settings.color);
+  const backgroundIsGradient = isGradientValue(settings.background);
+
+  // Reset previous preview paint.
+  textarea.style.backgroundImage = "none";
+  textarea.style.backgroundColor = "transparent";
+  textarea.style.backgroundClip = "border-box";
+  textarea.style.webkitBackgroundClip = "border-box";
+  textarea.style.backgroundOrigin = "border-box";
+  textarea.style.backgroundRepeat = "no-repeat";
+
+  // Solid text color.
+  if (!textIsGradient) {
+    textarea.style.color = settings.color || "#000000";
+    textarea.style.webkitTextFillColor =
+      settings.color || "#000000";
+  } else {
+    // Gradient text needs transparent text fill so its
+    // background layer can show through the characters.
+    textarea.style.color = "transparent";
+    textarea.style.webkitTextFillColor = "transparent";
+  }
+
+  // Both text and background are gradients.
+  if (textIsGradient && backgroundIsGradient) {
+    textarea.style.backgroundImage =
+      `${settings.color}, ${settings.background}`;
+
+    textarea.style.backgroundClip = "text, padding-box";
+    textarea.style.webkitBackgroundClip = "text, padding-box";
+
+    textarea.style.backgroundOrigin =
+      "border-box, border-box";
+
+    return;
+  }
+
+  // Gradient text, solid or transparent background.
+  if (textIsGradient) {
+    textarea.style.backgroundImage = settings.color;
+    textarea.style.backgroundClip = "text";
+    textarea.style.webkitBackgroundClip = "text";
+
+    if (settings.background !== "transparent") {
+      textarea.style.backgroundColor = settings.background;
+    }
+
+    return;
+  }
+
+  // Solid text, gradient background.
+  if (backgroundIsGradient) {
+    textarea.style.backgroundImage = settings.background;
+    textarea.style.backgroundClip = "padding-box";
+    textarea.style.webkitBackgroundClip = "padding-box";
+    return;
+  }
+
+  // Both paints are solid, or the background is transparent.
+  textarea.style.backgroundColor =
+    settings.background || "transparent";
 }
 
 function syncTypographyControls() {
@@ -1294,6 +1411,7 @@ let paragraphDraftPaint = {
   background: "transparent"
 };
 
+/*
 function beginParagraphDraft(event) {
   // Allow only one unfinished paragraph at a time.
   if (activeParagraphDraft) return;
@@ -1491,6 +1609,440 @@ function beginParagraphDraft(event) {
     };
 
     // Retain the chosen colors for the next paragraph.
+    paragraphDraftPaint.color = settings.color;
+    paragraphDraftPaint.background = settings.background;
+
+    draft.remove();
+    activeParagraphDraft = null;
+
+    project.elements.push(elementData);
+
+    undoStack.push({
+      type: "place",
+      element: { ...elementData }
+    });
+
+    limitHistory(undoStack);
+    redoStack.length = 0;
+
+    renderElement(elementData);
+    updateCanvasHeight();
+  });
+}
+ */
+
+function beginParagraphDraft(event) {
+  // Allow only one unfinished paragraph at a time.
+  if (activeParagraphDraft) return;
+
+  const rect = canvas.getBoundingClientRect();
+
+  const draft = document.createElement("div");
+  draft.className = "paragraph-draft";
+
+  const toolbar = document.createElement("div");
+  toolbar.className = "paragraph-draft-toolbar";
+
+  const textarea = document.createElement("textarea");
+  textarea.placeholder = "Write your paragraph...";
+  textarea.setAttribute("aria-label", "Paragraph text");
+
+  const actions = document.createElement("div");
+  actions.className = "paragraph-draft-actions";
+
+  const cancelButton = document.createElement("button");
+  cancelButton.type = "button";
+  cancelButton.textContent = "Cancel";
+
+  const doneButton = document.createElement("button");
+  doneButton.type = "button";
+  doneButton.textContent = "Done";
+
+  // Each draft starts with the last-used paint settings.
+  const settings = {
+    color: paragraphDraftPaint.color,
+    background: paragraphDraftPaint.background,
+    fontFamily: fontFamily.value,
+    fontSize: Number(paragraphFontSize.value)
+  };
+
+  // Helper for creating a label.
+  function createLabel(text, control) {
+    const label = document.createElement("label");
+    label.textContent = text;
+    label.appendChild(control);
+    return label;
+  }
+
+  // Helper for creating a gradient control group.
+  function createGradientControls(initialValue) {
+    const group = document.createElement("div");
+    group.className = "paragraph-gradient-controls";
+
+    const direction = document.createElement("select");
+
+    [
+      ["to right", "Left to right"],
+      ["to left", "Right to left"],
+      ["to bottom", "Top to bottom"],
+      ["to top", "Bottom to top"],
+      ["to bottom right", "Diagonal"],
+      ["to bottom left", "Reverse diagonal"]
+    ].forEach(([value, label]) => {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = label;
+      direction.appendChild(option);
+    });
+
+    const start = document.createElement("input");
+    start.type = "color";
+
+    const end = document.createElement("input");
+    end.type = "color";
+
+    // Use sensible defaults, unless the saved value is a gradient.
+    direction.value = "to right";
+    start.value = "#3366ff";
+    end.value = "#ff66cc";
+
+    const gradientMatch = initialValue?.match(
+      /^linear-gradient\(([^,]+),\s*(#[0-9a-fA-F]{3,8}),\s*(#[0-9a-fA-F]{3,8})\)$/
+    );
+
+    if (gradientMatch) {
+      direction.value = gradientMatch[1].trim();
+      start.value = gradientMatch[2];
+      end.value = gradientMatch[3];
+    }
+
+    group.append(
+      createLabel("Direction", direction),
+      createLabel("Start", start),
+      createLabel("End", end)
+    );
+
+    return {
+      group,
+      direction,
+      start,
+      end
+    };
+  }
+
+  // --------------------------------------------------
+  // TEXT COLOR CONTROLS
+  // --------------------------------------------------
+
+  const textColorMode = document.createElement("select");
+
+  [
+    ["solid", "Solid"],
+    ["gradient", "Gradient"]
+  ].forEach(([value, label]) => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    textColorMode.appendChild(option);
+  });
+
+  const textColor = document.createElement("input");
+  textColor.type = "color";
+
+  const textGradient = createGradientControls(settings.color);
+
+  const textIsGradient = isGradientValue(settings.color);
+
+  textColorMode.value = textIsGradient ? "gradient" : "solid";
+
+  textColor.value = textIsGradient
+    ? "#000000"
+    : settings.color || "#000000";
+
+  const textColorLabel = createLabel("Text paint", textColorMode);
+  const textColorSolidLabel = createLabel("Text color", textColor);
+
+  const textColorControls = document.createElement("div");
+  textColorControls.className = "paragraph-paint-controls";
+
+  textColorControls.append(
+    textColorSolidLabel,
+    textGradient.group
+  );
+
+  // --------------------------------------------------
+  // BACKGROUND CONTROLS
+  // --------------------------------------------------
+
+  const backgroundMode = document.createElement("select");
+
+  [
+    ["solid", "Solid"],
+    ["gradient", "Gradient"],
+    ["transparent", "Transparent"]
+  ].forEach(([value, label]) => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    backgroundMode.appendChild(option);
+  });
+
+  const backgroundColor = document.createElement("input");
+  backgroundColor.type = "color";
+
+  const backgroundGradient = createGradientControls(
+    settings.background
+  );
+
+  const backgroundIsGradient = isGradientValue(settings.background);
+
+  backgroundMode.value =
+    settings.background === "transparent"
+      ? "transparent"
+      : backgroundIsGradient
+        ? "gradient"
+        : "solid";
+
+  backgroundColor.value =
+    settings.background?.startsWith("#")
+      ? settings.background
+      : "#ffffff";
+
+  const backgroundLabel = createLabel(
+    "Background paint",
+    backgroundMode
+  );
+
+  const backgroundSolidLabel = createLabel(
+    "Background color",
+    backgroundColor
+  );
+
+  const backgroundControls = document.createElement("div");
+  backgroundControls.className = "paragraph-paint-controls";
+
+  backgroundControls.append(
+    backgroundSolidLabel,
+    backgroundGradient.group
+  );
+
+  // --------------------------------------------------
+  // TYPOGRAPHY CONTROLS
+  // --------------------------------------------------
+
+  const fontFamilySelect = fontFamily.cloneNode(true);
+  fontFamilySelect.removeAttribute("id");
+  fontFamilySelect.value = settings.fontFamily;
+
+  const fontFamilyLabel = createLabel(
+    "Font",
+    fontFamilySelect
+  );
+
+  const fontSizeInput = paragraphFontSize.cloneNode(true);
+  fontSizeInput.removeAttribute("id");
+  fontSizeInput.value = String(settings.fontSize);
+
+  const fontSizeLabel = createLabel(
+    "Size",
+    fontSizeInput
+  );
+
+  // --------------------------------------------------
+  // BUILD THE POPUP
+  // --------------------------------------------------
+
+  toolbar.append(
+    textColorLabel,
+    textColorControls,
+    backgroundLabel,
+    backgroundControls,
+    fontFamilyLabel,
+    fontSizeLabel
+  );
+
+  actions.append(cancelButton, doneButton);
+
+  draft.append(toolbar, textarea, actions);
+
+  draft.style.left = `${event.clientX - rect.left}px`;
+  draft.style.top = `${event.clientY - rect.top}px`;
+
+  canvas.appendChild(draft);
+
+  activeParagraphDraft = {
+    draft,
+    textarea,
+    settings
+  };
+
+  // --------------------------------------------------
+  // UPDATE CONTROL VISIBILITY
+  // --------------------------------------------------
+
+  function syncPaintControls() {
+    textColorSolidLabel.hidden =
+      textColorMode.value !== "solid";
+
+    textGradient.group.hidden =
+      textColorMode.value !== "gradient";
+
+    backgroundSolidLabel.hidden =
+      backgroundMode.value !== "solid";
+
+    backgroundGradient.group.hidden =
+      backgroundMode.value !== "gradient";
+  }
+
+  // --------------------------------------------------
+  // BUILD AND SAVE TEXT COLOR
+  // --------------------------------------------------
+
+  function updateTextPaint() {
+    if (textColorMode.value === "solid") {
+      settings.color = textColor.value;
+    } else {
+      settings.color = createGradientValue(
+        textGradient.direction.value,
+        textGradient.start.value,
+        textGradient.end.value
+      );
+    }
+
+    paragraphDraftPaint.color = settings.color;
+
+    applyParagraphTypography();
+  }
+
+  // --------------------------------------------------
+  // BUILD AND SAVE BACKGROUND PAINT
+  // --------------------------------------------------
+
+  function updateBackgroundPaint() {
+    if (backgroundMode.value === "transparent") {
+      settings.background = "transparent";
+    } else if (backgroundMode.value === "solid") {
+      settings.background = backgroundColor.value;
+    } else {
+      settings.background = createGradientValue(
+        backgroundGradient.direction.value,
+        backgroundGradient.start.value,
+        backgroundGradient.end.value
+      );
+    }
+
+    paragraphDraftPaint.background = settings.background;
+
+    applyParagraphTypography();
+  }
+
+  // --------------------------------------------------
+  // TEXT COLOR EVENTS
+  // --------------------------------------------------
+
+  textColorMode.addEventListener("change", () => {
+    syncPaintControls();
+    updateTextPaint();
+  });
+
+  textColor.addEventListener("input", updateTextPaint);
+
+  [
+    textGradient.direction,
+    textGradient.start,
+    textGradient.end
+  ].forEach((control) => {
+    control.addEventListener("input", updateTextPaint);
+    control.addEventListener("change", updateTextPaint);
+  });
+
+  // --------------------------------------------------
+  // BACKGROUND EVENTS
+  // --------------------------------------------------
+
+  backgroundMode.addEventListener("change", () => {
+    syncPaintControls();
+    updateBackgroundPaint();
+  });
+
+  backgroundColor.addEventListener(
+    "input",
+    updateBackgroundPaint
+  );
+
+  [
+    backgroundGradient.direction,
+    backgroundGradient.start,
+    backgroundGradient.end
+  ].forEach((control) => {
+    control.addEventListener("input", updateBackgroundPaint);
+    control.addEventListener("change", updateBackgroundPaint);
+  });
+
+  // --------------------------------------------------
+  // TYPOGRAPHY EVENTS
+  // --------------------------------------------------
+
+  fontFamilySelect.addEventListener("change", () => {
+    settings.fontFamily = fontFamilySelect.value;
+    applyParagraphTypography();
+  });
+
+  fontSizeInput.addEventListener("input", () => {
+    settings.fontSize = Number(fontSizeInput.value);
+    applyParagraphTypography();
+  });
+
+  // Initial preview and visibility.
+  syncPaintControls();
+  applyParagraphTypography();
+
+  textarea.focus();
+
+  // --------------------------------------------------
+  // CANCEL
+  // --------------------------------------------------
+
+  cancelButton.addEventListener("click", () => {
+    draft.remove();
+    activeParagraphDraft = null;
+  });
+
+  // --------------------------------------------------
+  // DONE
+  // --------------------------------------------------
+
+  doneButton.addEventListener("click", () => {
+    const text = textarea.value.trim();
+
+    if (!text) {
+      textarea.focus();
+      return;
+    }
+
+    const elementData = {
+      id: crypto.randomUUID(),
+      type: "text",
+
+      x: parseFloat(draft.style.left),
+      y: parseFloat(draft.style.top),
+
+      width: textarea.offsetWidth,
+      height: textarea.scrollHeight,
+
+      text,
+
+      fontFamily: settings.fontFamily,
+      fontSize: settings.fontSize,
+
+      color: settings.color,
+      background: settings.background,
+
+      paddingX: 10,
+      paddingY: 8
+    };
+
+    // Retain the selected paints for the next paragraph.
     paragraphDraftPaint.color = settings.color;
     paragraphDraftPaint.background = settings.background;
 

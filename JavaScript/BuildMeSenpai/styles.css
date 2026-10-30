@@ -254,6 +254,37 @@ body {
   gap: 8px;
 }
 
+.paragraph-paint-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.paragraph-gradient-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.paragraph-gradient-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+}
+
+/* Respect the visibility controls in the popup. */
+.paragraph-draft [hidden] {
+  display: none !important;
+}
+
+/* Text inside a created paragraph. */
+.text-content {
+  white-space: pre-wrap;
+}
+
 #padding-controls {
   display: flex;
   flex-direction: column;
