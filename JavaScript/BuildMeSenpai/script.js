@@ -28,11 +28,13 @@ const paddingCssError = document.getElementById("padding-css-error");
 backgroundType.addEventListener("change", updateBackgroundControls);
 gradientStart.addEventListener("input", updateBackground);
 gradientEnd.addEventListener("input", updateBackground);
+gradientDirection.addEventListener("change", updateBackground);
 gradientDirection.addEventListener("change", updateBackgroundControls);
 
 paddingX.addEventListener("input", handlePaddingXChange);
 paddingY.addEventListener("input", handlePaddingYChange);
 applyPaddingCssButton.addEventListener("click", handleApplyPaddingCss);
+
 
 colorPicker.addEventListener("input", () => {
   if (editorMode.value === "paragraph") {
@@ -40,13 +42,23 @@ colorPicker.addEventListener("input", () => {
     return;
   }
 
-  // Preserve the existing background/header color behavior.
+  const target = getColorTarget();
+
+  if (editorMode.value === "edit" && selectedElementId) {
+    if (target === "color") {
+      updateSelectedElementProperty("color", colorPicker.value);
+    } else {
+      updateBackground();
+    }
+
+    return;
+  }
+
+  // Preserve the existing header placement behavior.
   updateBackground();
-  elementConfigs.header.background = colorPicker.value;
-
   updateGhost();
-
 });
+
 
 
 editorMode.addEventListener("change", () => {
@@ -60,12 +72,6 @@ editorMode.addEventListener("change", () => {
     // Restore the header's saved color in the picker.
     colorPicker.value = elementConfigs.header.background;
   }
-
-  // Allow the picker in Paragraph mode or when editing a header.
-  colorPicker.disabled = !(
-    editorMode.value === "paragraph" ||
-    activeType === "header"
-  );
 
   updateEditorMode();
   updateToolbarForSelection();
@@ -110,6 +116,7 @@ const elementConfigs = {
     color: "#000000",
     editableProperties: [
       "color",
+      "background",
       "fontFamily",
       "fontSize",
       "text",
@@ -204,7 +211,7 @@ function renderElement(data) {
     data.type === "text"
       ? `${measureParagraphHeight(data)}px`
       : `${data.height}px`;
-  element.style.background = data.background;
+  element.style.background = data.background || "transparent";
   element.style.transform = "translate(-50%, -50%)";
 
   if (data.type === "text") {
@@ -303,12 +310,7 @@ function updateRenderedElement(data, changedProperties = null) {
 
   // Background
   if (changed("background")) {
-    element.style.background = data.background;
-
-    // Text paragraphs keep a transparent background.
-    if (isText) {
-      element.style.background = "transparent";
-    }
+    element.style.background = data.background || "transparent";
   }
 
   // Text-specific appearance
@@ -774,28 +776,64 @@ function syncPaddingControls(data) {
 
 
 function applySelectedPadding(p) {
+  // Padding changes are only allowed in Edit mode.
+  if (editorMode.value !== "edit" || !selectedElementId) {
+    return;
+  }
+
   const data = project.elements.find(
     (item) => item.id === selectedElementId
   );
 
   if (!data || data.type !== "text") return;
 
-  data.paddingTop = p.top;
-  data.paddingRight = p.right;
-  data.paddingBottom = p.bottom;
-  data.paddingLeft = p.left;
+  // Capture the original padding values.
+  const before = {
+    paddingTop: data.paddingTop,
+    paddingRight: data.paddingRight,
+    paddingBottom: data.paddingBottom,
+    paddingLeft: data.paddingLeft,
+    paddingX: data.paddingX,
+    paddingY: data.paddingY
+  };
 
-  // Keep the original paired values for compatibility.
-  data.paddingX = (p.left + p.right) / 2;
-  data.paddingY = (p.top + p.bottom) / 2;
+  // Prepare the new padding values.
+  const after = {
+    paddingTop: p.top,
+    paddingRight: p.right,
+    paddingBottom: p.bottom,
+    paddingLeft: p.left,
+    paddingX: (p.left + p.right) / 2,
+    paddingY: (p.top + p.bottom) / 2
+  };
 
-  updateRenderedTextElement(data);
-
-  selectedElementData = project.elements.find(
-    (item) => item.id === selectedElementId
+  // Avoid recording unchanged values.
+  const changed = Object.keys(after).some(
+    (key) => before[key] !== after[key]
   );
 
-  syncPaddingControls(selectedElementData);
+  if (!changed) return;
+
+  // Apply the new values.
+  Object.assign(data, after);
+
+  // Record the complete padding change.
+  undoStack.push({
+    type: "padding",
+    id: data.id,
+    before,
+    after
+  });
+
+  limitHistory(undoStack);
+  redoStack.length = 0;
+
+  // Refresh the visible paragraph.
+  updateRenderedTextElement(data);
+
+  selectedElementData = data;
+
+  syncPaddingControls(data);
   updateToolbarForSelection();
 }
 
@@ -868,6 +906,7 @@ function updateToolbarForSelection() {
 
 // This function will update background and update ghost for all elements that support
 // background property
+/*
 function updateBackground() {
   const config = elementConfigs.header;
 
@@ -884,6 +923,111 @@ function updateBackground() {
   }
 
   // Ensures the user picked values will be put into the project dataset correctly
+  project.background.type = backgroundType.value;
+  project.background.color = colorPicker.value;
+  project.background.gradientStart = gradientStart.value;
+  project.background.gradientEnd = gradientEnd.value;
+  project.background.gradientDirection = gradientDirection.value;
+}
+
+ */
+
+function getColorTarget() {
+  return document.querySelector(
+    'input[name="colorTarget"]:checked'
+  )?.value || "color";
+}
+
+document.querySelectorAll('input[name="colorTarget"]')
+  .forEach((radio) => {
+    radio.addEventListener("change", () => {
+      const data = project.elements.find(
+        (item) => item.id === selectedElementId
+      );
+
+      if (!data) return;
+
+      if (
+        getColorTarget() === "color" &&
+        Object.prototype.hasOwnProperty.call(data, "color")
+      ) {
+        colorPicker.value = data.color || "#000000";
+      }
+    });
+  });
+
+const clearBackgroundButton = document.getElementById(
+  "clearBackgroundButton"
+);
+
+clearBackgroundButton.addEventListener("click", () => {
+  if (
+    getColorTarget() !== "background" ||
+    editorMode.value !== "edit" ||
+    !selectedElementId
+  ) {
+    return;
+  }
+
+  updateSelectedElementProperty("background", "transparent");
+});
+
+
+function getSelectedPaintValue(target) {
+  if (backgroundType.value === "solid") {
+    return colorPicker.value;
+  }
+
+  const gradient =
+    `linear-gradient(${gradientDirection.value}, ` +
+    `${gradientStart.value}, ${gradientEnd.value})`;
+
+  return gradient;
+}
+
+
+
+function updateBackground() {
+  const target = getColorTarget();
+  const selectedData = selectedElementId
+    ? project.elements.find(
+      (item) => item.id === selectedElementId
+    )
+    : null;
+
+  // When editing an element, update the selected paint target.
+  if (selectedData) {
+    const property = target === "color" ? "color" : "background";
+    const config = elementConfigs[selectedData.type];
+
+    if (!config?.editableProperties?.includes(property)) {
+      return;
+    }
+
+    const value =
+      backgroundType.value === "solid"
+        ? colorPicker.value
+        : `linear-gradient(${gradientDirection.value}, ${gradientStart.value}, ${gradientEnd.value})`;
+
+    updateSelectedElementProperty(property, value);
+    return;
+  }
+
+
+  // Preserve the existing background behavior when no element is selected.
+  const config = elementConfigs.header;
+
+  if (backgroundType.value === "solid") {
+    config.background = colorPicker.value;
+  } else {
+    config.background =
+      `linear-gradient(${gradientDirection.value}, ${gradientStart.value}, ${gradientEnd.value})`;
+  }
+
+  if (activeType === "header") {
+    updateGhost();
+  }
+
   project.background.type = backgroundType.value;
   project.background.color = colorPicker.value;
   project.background.gradientStart = gradientStart.value;
@@ -929,11 +1073,6 @@ elementType.addEventListener("change", () => {
 
   updateGhost();
 
-  // Only show the color picker for headers + paragraph for now
-  colorPicker.disabled = !(
-    activeType === "header" ||
-    editorMode.value === "paragraph"
-  );
 });
 
 // Helper function for the paragraphHandler
@@ -1008,6 +1147,70 @@ function updateSelectedParagraphProperty(property, value) {
   redoStack.length = 0;
 }
  */
+
+// Function to update element property that checks for the editabeProperties of each element
+// In project data set
+
+
+function updateSelectedElementProperty(property, value) {
+  if (editorMode.value !== "edit" || !selectedElementId) {
+    return;
+  }
+
+  const data = project.elements.find(
+    (item) => item.id === selectedElementId
+  );
+
+  if (!data) return;
+
+  const config = elementConfigs[data.type];
+
+  if (!config?.editableProperties?.includes(property)) {
+    return;
+  }
+
+  const before = data[property];
+
+  if (before === value) return;
+
+  // Capture the related configuration before changing anything.
+  const configBefore =
+    data.type === "header" && property === "background"
+      ? elementConfigs.header.background
+      : undefined;
+
+  data[property] = value;
+
+  // Keep the default header appearance synchronized.
+  if (data.type === "header" && property === "background") {
+    elementConfigs.header.background = value;
+    updateGhost();
+  }
+
+  // Update only the affected DOM property.
+  updateRenderedElement(data, [property]);
+
+  // Record the complete history action.
+  undoStack.push({
+    type: "property",
+    id: data.id,
+    property,
+    before,
+    after: value,
+
+    configBefore,
+    configAfter:
+      data.type === "header" && property === "background"
+        ? value
+        : undefined
+  });
+
+  limitHistory(undoStack);
+  redoStack.length = 0;
+
+  selectedElementData = data;
+}
+
 
 
 function updateSelectedParagraphProperty(property, value) {
@@ -1630,6 +1833,18 @@ function refreshAfterHistoryAction(action) {
   else if (action.type === "resize") {
     updateRenderedElement(element, ["position", "size"]);
   }
+
+  else if (action.type === "padding") {
+    updateRenderedTextElement(element);
+
+    if (selectedElementId === element.id) {
+      selectedElementData = element;
+
+      syncPaddingControls(element);
+      updateToolbarForSelection();
+    }
+  }
+
 }
 
 
@@ -1686,6 +1901,17 @@ function undoAction() {
     }
   }
 
+  else if (action.type === "padding") {
+    const element = project.elements.find(
+      (item) => item.id === action.id
+    );
+
+    if (element) {
+      Object.assign(element, action.before);
+    }
+  }
+
+
   else if (action.type === "property") {
     const element = project.elements.find(
       (item) => item.id === action.id
@@ -1693,6 +1919,14 @@ function undoAction() {
 
     if (element) {
       element[action.property] = action.before;
+
+      // Restore the associated configuration when applicable.
+      if (action.configBefore !== undefined) {
+        elementConfigs[element.type].background =
+          action.configBefore;
+
+        updateGhost();
+      }
     }
   }
 
@@ -1744,6 +1978,18 @@ function redoAction() {
     }
   }
 
+
+  else if (action.type === "padding") {
+    const element = project.elements.find(
+      (item) => item.id === action.id
+    );
+
+    if (element) {
+      Object.assign(element, action.after);
+    }
+  }
+
+
   else if (action.type === "property") {
     const element = project.elements.find(
       (item) => item.id === action.id
@@ -1751,8 +1997,17 @@ function redoAction() {
 
     if (element) {
       element[action.property] = action.after;
+
+      // Restore the associated configuration when applicable.
+      if (action.configAfter !== undefined) {
+        elementConfigs[element.type].background =
+          action.configAfter;
+
+        updateGhost();
+      }
     }
   }
+
 
 
   undoStack.push(action);
