@@ -1162,6 +1162,7 @@ elementType.addEventListener("change", () => {
 });
 
 // Helper function for the paragraphHandler
+/*
 function applyParagraphTypography() {
   if (!activeParagraphDraft) return;
 
@@ -1242,6 +1243,74 @@ function syncTypographyControls() {
 
   fontFamily.value = data.fontFamily || "Arial";
   paragraphFontSize.value = String(data.fontSize || 16);
+}
+
+ */
+
+// Helper function for the paragraphHandler
+// Helper function for the paragraphHandler
+function applyParagraphTypography() {
+  if (!activeParagraphDraft) return;
+
+  const { textarea, settings } = activeParagraphDraft;
+  const wrapper = textarea.parentElement; // The container holding the textarea
+
+  textarea.style.fontFamily = settings.fontFamily;
+  textarea.style.fontSize = `${settings.fontSize}px`;
+
+  const textIsGradient = isGradientValue(settings.color);
+  const backgroundIsGradient = isGradientValue(settings.background);
+
+  // Reset previous preview paint on both elements
+  textarea.style.backgroundImage = "none";
+  textarea.style.backgroundColor = "transparent";
+  textarea.style.backgroundClip = "";
+  textarea.style.webkitBackgroundClip = "";
+  textarea.style.MozBackgroundClip = "";
+  textarea.style.backgroundOrigin = "";
+
+  if (wrapper) {
+    wrapper.style.backgroundImage = "none";
+    wrapper.style.backgroundColor = "transparent";
+  }
+
+  // 1. Handle Text Color / Text Gradient
+  if (!textIsGradient) {
+    textarea.style.color = settings.color || "#000000";
+    textarea.style.webkitTextFillColor = settings.color || "#000000";
+  } else {
+    // Gradient text needs transparent text fill to show the gradient
+    textarea.style.color = "transparent";
+    textarea.style.webkitTextFillColor = "transparent";
+    textarea.style.backgroundImage = settings.color;
+    textarea.style.backgroundClip = "text";
+    textarea.style.webkitBackgroundClip = "text";
+    textarea.style.MozBackgroundClip = "text";
+  }
+
+  // 2. Handle Textarea Box Background (Solid or Gradient)
+  // If text is a gradient, Firefox breaks if we put the box background on the textarea itself.
+  // We safely apply the box background to the parent wrapper instead!
+  if (textIsGradient && wrapper) {
+    if (backgroundIsGradient) {
+      wrapper.style.backgroundImage = settings.background;
+    } else if (settings.background && settings.background !== "transparent") {
+      wrapper.style.backgroundColor = settings.background;
+    }
+    return;
+  }
+
+  // Solid text, gradient background (Safe to apply directly to textarea)
+  if (backgroundIsGradient) {
+    textarea.style.backgroundImage = settings.background;
+    textarea.style.backgroundClip = "padding-box";
+    textarea.style.webkitBackgroundClip = "padding-box";
+    textarea.style.MozBackgroundClip = "padding-box";
+    return;
+  }
+
+  // Both text and background are solid, or background is transparent
+  textarea.style.backgroundColor = settings.background || "transparent";
 }
 
 /*
