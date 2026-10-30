@@ -238,3 +238,104 @@ td, th {
   cursor: pointer;
   border-radius: 4px;
 }
+
+/* Stilar för klickbara tabellrader och action-knappar */
+#money-menu tr {
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+#money-menu tr:hover {
+  background-color: rgba(173, 255, 47, 0.1); /* Svag grön-gul ton vid hover */
+}
+
+#money-menu tr.selected {
+  background-color: rgba(173, 255, 47, 0.25);
+  border-left: 4px solid greenyellow;
+}
+
+.action-btn-group {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.edit-btn, .delete-btn {
+  padding: 4px 8px;
+  font-size: 0.7em;
+  font-weight: bold;
+  border-radius: 3px;
+  cursor: pointer;
+  border: 1px solid;
+}
+
+.edit-btn {
+  background-color: transparent;
+  color: goldenrod;
+  border-color: goldenrod;
+}
+
+.edit-btn:hover {
+  background-color: goldenrod;
+  color: black;
+}
+
+.delete-btn {
+  background-color: transparent;
+  color: #ff6b6b;
+  border-color: #ff6b6b;
+}
+
+.delete-btn:hover {
+  background-color: #ff6b6b;
+  color: black;
+}
+
+/* Stil för input-fält direkt inne i tabellen vid redigering */
+.edit-input {
+  width: 100%;
+  background: #1a2638;
+  color: greenyellow;
+  border: 1px dashed greenyellow;
+  padding: 4px;
+  font-size: 0.9em;
+  border-radius: 3px;
+}
+
+.edit-input:focus {
+  outline: none;
+  border-color: goldenrod;
+  background: black;
+}
+
+.save-btn {
+  background-color: transparent;
+  color: greenyellow;
+  border: 1px solid greenyellow;
+  padding: 4px 8px;
+  font-size: 0.7em;
+  font-weight: bold;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.save-btn:hover {
+  background-color: greenyellow;
+  color: black;
+}
+
+.cancel-btn {
+  background-color: transparent;
+  color: #ff6b6b;
+  border: 1px solid #ff6b6b;
+  padding: 4px 8px;
+  font-size: 0.7em;
+  font-weight: bold;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.cancel-btn:hover {
+  background-color: #ff6b6b;
+  color: black;
+}

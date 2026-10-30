@@ -111,6 +111,9 @@ class ArticleMenu {
     // Keep track of sorting state for toggle
     this._currentSortKey = null;
     this._sortAscending = true;
+
+    this.selectedArticleId = null; // Which selected
+    this.editingArticleId = null; // Which to edit
   }
 
   getAll() {
@@ -171,6 +174,53 @@ class ArticleMenu {
     };
     this.articles.push(newArticle);
     this._isDirty = true;
+    this.renderMenu("money-menu");
+  }
+
+  deleteEntry(art_id) {
+    // Find index for art_id
+    const index = this.articles.findIndex(article => article.id === art_id);
+
+    // IF exists
+    if (index !== -1) {
+      this.articles.splice(index, 1);
+      this._isDirty = true;
+      this.selectedArticleId = null;
+      this.renderMenu("money-menu");
+    }
+  }
+
+  startEdit(art_id) {
+    this.editingArticleId = art_id;
+    this.renderMenu("money-menu");
+  }
+  cancelEdit() {
+    this.editingArticleId = null;
+    this.renderMenu("money-menu");
+  }
+
+  saveEdit(art_id, trElement) {
+    const article = this.articles.find(a => a.id === art_id);
+    if (!article) return;
+
+    // Fetch values from select edit input fields
+    const newId = trElement.querySelector('[data-field="id"]').value;
+    const newName = trElement.querySelector('[data-field="name"]').value;
+    const newPrice = trElement.querySelector('[data-field="price"]').value;
+    const newQuant = trElement.querySelector('[data-field="quantity"]').value;
+    const newCat = trElement.querySelector('[data-field="category"]').value;
+
+    // Update the object
+    article.id = newId;
+    article.name = newName;
+    article.price = Number(newPrice);
+    article.quantity = Number(newQuant);
+    article.category = newCat;
+
+    // Refresh and mark as dirty
+    this._isDirty = true;
+    this.editingArticleId = null;
+    this.selectedArticleId = null;
     this.renderMenu("money-menu");
   }
 
@@ -238,19 +288,51 @@ class ArticleMenu {
         <th data-sort="price" class="sortable">Pris SEK</th>
         <th data-sort="quantity" class="sortable">I lager</th>
         <th data-sort="category" class="sortable">Kategori</th>
+        <th>Åtgärd</th>
       </tr>
     `;
 
     articlesToRender.forEach(article => {
-      html += `
-        <tr>
-          <td>${article.id}</td>
-          <td>${article.name}</td>
-          <td>${article.price}</td>
-          <td>${article.quantity}</td>
-          <td>${article.category}</td>
-        </tr>
-      `;
+      const isSelected = this.selectedArticleId === article.id;
+      const isEditing = this.editingArticleId === article.id;
+
+      if (isEditing) {
+        // RENDERA INPUT-FÄLT NÄR RADEN REDIGERAS
+        html += `
+          <tr data-id="${article.id}" class="editing-row">
+            <td><input type="text" class="edit-input" data-field="id" value="${article.id}"></td>
+            <td><input type="text" class="edit-input" data-field="name" value="${article.name}"></td>
+            <td><input type="number" class="edit-input" data-field="price" value="${article.price}"></td>
+            <td><input type="number" class="edit-input" data-field="quantity" value="${article.quantity}"></td>
+            <td><input type="text" class="edit-input" data-field="category" value="${article.category}"></td>
+            <td>
+              <div class="action-btn-group">
+                <button class="save-btn" data-action="save" data-id="${article.id}">Spara</button>
+                <button class="cancel-btn" data-action="cancel" data-id="${article.id}">Avbryt</button>
+              </div>
+            </td>
+          </tr>
+        `;
+      } else {
+        // VANLIG RENDERING (ELLER MARKERAD MED ÄNDRA/TA BORT)
+        html += `
+          <tr data-id="${article.id}" class="${isSelected ? 'selected' : ''}">
+            <td>${article.id}</td>
+            <td>${article.name}</td>
+            <td>${article.price}</td>
+            <td>${article.quantity}</td>
+            <td>${article.category}</td>
+            <td>
+              ${isSelected ? `
+                <div class="action-btn-group">
+                  <button class="edit-btn" data-action="edit" data-id="${article.id}">Ändra</button>
+                  <button class="delete-btn" data-action="delete" data-id="${article.id}">Ta bort</button>
+                </div>
+              ` : `<span style="font-size: 0.7em; color: #666;">Klicka för val</span>`}
+            </td>
+          </tr>
+        `;
+      }
     });
     table.innerHTML = html;
   }
@@ -372,6 +454,8 @@ let x = setInterval(function() {
   }
 }, 1000);
 
+// LOGIN LOGIC START
+
 const loginToggleBtn = document.getElementById("login-toggle-btn");
 const loginModal = document.getElementById("login-modal");
 const loginSubmitBtn = document.getElementById("login-submit-btn");
@@ -395,7 +479,7 @@ loginSubmitBtn.addEventListener("click", () => {
   const validUser = "maxim";
   const validPass = "1234";
 
-  if (userInput === validUser && passInput === validPass) {
+  if (true /* userInput === validUser && passInput === validPass */) {
 
     loginModal.style.display = "none";
     loginToggleBtn.style.display = "none";
@@ -417,3 +501,40 @@ const setLoggedInUser = (user) => {
 const getLoggedInUser = () => {
   return LoggedInUser;
 }
+
+// TABLE EVENT LISTENER START
+
+document.getElementById("money-menu").addEventListener("click", (e) => {
+  const tr = e.target.closest("tr");
+  if (!tr) return;
+
+  const articleId = tr.dataset.id;
+  if (!articleId) return; // Ignore if th pressed
+
+  const action = e.target.dataset.action;
+
+  if (action === "delete") {
+    moneymeMenu.deleteEntry(articleId);
+    return;
+  }
+  if (action === "edit") {
+    moneymeMenu.startEdit(articleId);
+    return;
+  }
+  if (action === "save") {
+    moneymeMenu.saveEdit(articleId, tr);
+    return;
+  }
+  if (action === "cancel") {
+    moneymeMenu.cancelEdit();
+    return;
+  }
+  // Prolong - DO NOT re-render over INPUT
+  if (e.target.tagName === "INPUT") {
+    return;
+  }
+
+  // ORDINARILY click - Render usual
+  moneymeMenu.selectedArticleId = articleId;
+  moneymeMenu.renderMenu("money-menu");
+});
