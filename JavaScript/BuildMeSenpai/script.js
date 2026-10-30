@@ -965,52 +965,36 @@ function getSelectedPaintValue() {
 
 function updateBackground() {
   const target = getColorTarget();
+
   const selectedData = selectedElementId
-    ? project.elements.find(
-      (item) => item.id === selectedElementId
-    )
+    ? project.elements.find((item) => item.id === selectedElementId)
     : null;
 
-  // When editing an element, update the selected paint target.
   if (selectedData) {
     const property = target === "color" ? "color" : "background";
     const config = elementConfigs[selectedData.type];
 
-    if (!config?.editableProperties?.includes(property)) {
-      return;
-    }
+    if (!config?.editableProperties?.includes(property)) return;
 
     const value =
       backgroundType.value === "solid"
         ? colorPicker.value
-        : createGradientValue(
-          gradientDirection.value,
-          gradientStart.value,
-          gradientEnd.value
-        );
+        : `linear-gradient(${gradientDirection.value}, ${gradientStart.value}, ${gradientEnd.value})`;
 
     updateSelectedElementProperty(property, value);
     return;
   }
 
-
-  // Preserve the existing background behavior when no element is selected.
   const config = elementConfigs.header;
 
   if (backgroundType.value === "solid") {
     config.background = colorPicker.value;
   } else {
     config.background =
-      createGradientValue(
-        gradientDirection.value,
-        gradientStart.value,
-        gradientEnd.value
-      );
+      `linear-gradient(${gradientDirection.value}, ${gradientStart.value}, ${gradientEnd.value})`;
   }
 
-  if (activeType === "header") {
-    updateGhost();
-  }
+  if (activeType === "header") updateGhost();
 
   project.background.type = backgroundType.value;
   project.background.color = colorPicker.value;
@@ -1121,62 +1105,6 @@ function applyParagraphTypography() {
     textareaWrap.style.backgroundColor = settings.background;
   }
 }
-
-/*
-function updateSelectedParagraphProperty(property, value) {
-  if (editorMode.value !== "edit" || !selectedElementId) {
-    return;
-  }
-
-  const data = project.elements.find(
-    (item) => item.id === selectedElementId
-  );
-
-  if (!data || data.type !== "text") {
-    return;
-  }
-
-  const before = data[property];
-
-  // Ignore changes that don't actually change the value.
-  if (before === value) return;
-
-  // Update the project data.
-  data[property] = value;
-
-  // Update the visible paragraph immediately.
-  const element = [...canvas.querySelectorAll(".element")]
-    .find((item) => item.dataset.id === selectedElementId);
-
-  if (element) {
-    if (property === "fontFamily") {
-      element.style.fontFamily = value;
-    }
-
-    if (property === "fontSize") {
-      element.style.fontSize = `${value}px`;
-    }
-  }
-
-  // Record the change so it can be undone and redone.
-  undoStack.push({
-    type: "property",
-    id: data.id,
-    property,
-    before,
-    after: value
-  });
-
-  limitHistory(undoStack);
-
-  // A new edit clears the redo history.
-  redoStack.length = 0;
-}
- */
-
-// Function to update element property that checks for the editabeProperties of each element
-// In project data set
-
 
 function updateSelectedElementProperty(property, value) {
   if (editorMode.value !== "edit" || !selectedElementId) {
