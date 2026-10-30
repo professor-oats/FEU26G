@@ -25,6 +25,20 @@ body {
   background: #eeeeee;
 }
 
+.color-target-toggle {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.color-target-toggle label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
 #solid-controls,
 #gradient-controls {
   display: flex;
@@ -158,6 +172,7 @@ body {
   position: absolute;
 }
 
+/*
 .paragraph-draft {
   position: absolute;
   z-index: 1000;
@@ -194,6 +209,49 @@ body {
 .paragraph-draft-actions button {
   cursor: pointer;
   padding: 5px 10px;
+}
+ */
+
+.paragraph-draft {
+  position: absolute;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 300px;
+  padding: 10px;
+  background: white;
+  border: 1px solid #999;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.paragraph-draft-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.paragraph-draft-toolbar label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+}
+
+.paragraph-draft textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 80px;
+  resize: both;
+  padding: 8px;
+}
+
+.paragraph-draft-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 #padding-controls {

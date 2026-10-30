@@ -36,12 +36,8 @@ paddingY.addEventListener("input", handlePaddingYChange);
 applyPaddingCssButton.addEventListener("click", handleApplyPaddingCss);
 
 
-colorPicker.addEventListener("input", () => {
-  if (editorMode.value === "paragraph") {
-    applyParagraphTypography();
-    return;
-  }
 
+colorPicker.addEventListener("input", () => {
   const target = getColorTarget();
 
   if (editorMode.value === "edit" && selectedElementId) {
@@ -54,18 +50,28 @@ colorPicker.addEventListener("input", () => {
     return;
   }
 
-  // Preserve the existing header placement behavior.
-  updateBackground();
-  updateGhost();
+  if (editorMode.value === "place") {
+    updateBackground();
+    updateGhost();
+  }
 });
+
 
 
 
 editorMode.addEventListener("change", () => {
   if (editorMode.value === "paragraph") {
-    colorPicker.value = "#000000";
+    paragraphDraftPaint = {
+      color: "#000000",
+      background: "transparent"
+    };
 
-    // Apply black immediately if a paragraph draft is already open.
+    document.querySelector(
+      'input[name="colorTarget"][value="color"]'
+    ).checked = true;
+
+    colorPicker.value = paragraphDraftPaint.color;
+
     applyParagraphTypography();
   }
   else if (editorMode.value === "place" && activeType === "header") {
@@ -218,7 +224,7 @@ function renderElement(data) {
     element.style.fontFamily = data.fontFamily || "Arial";
     element.style.fontSize = `${data.fontSize || 16}px`;
     element.style.color = data.color || "#000000";
-    element.style.background = "transparent";
+    //element.style.background = "transparent";
 
     const p = getParagraphPadding(data);
     element.style.padding =
@@ -932,6 +938,8 @@ function updateBackground() {
 
  */
 
+/* Check what type of color change that will be wanted - background || color for example */
+
 function getColorTarget() {
   return document.querySelector(
     'input[name="colorTarget"]:checked'
@@ -941,17 +949,40 @@ function getColorTarget() {
 document.querySelectorAll('input[name="colorTarget"]')
   .forEach((radio) => {
     radio.addEventListener("change", () => {
+
+      const target = getColorTarget();
+
+      // While drafting, restore the previously selected paint.
+      if (activeParagraphDraft) {
+        const savedPaint = paragraphDraftPaint[target];
+
+        if (
+          savedPaint &&
+          !savedPaint.startsWith("linear-gradient")
+        ) {
+          colorPicker.value = savedPaint;
+        }
+
+        return;
+      }
+
+      // Existing selected-element behavior.
       const data = project.elements.find(
         (item) => item.id === selectedElementId
       );
 
       if (!data) return;
 
-      if (
-        getColorTarget() === "color" &&
-        Object.prototype.hasOwnProperty.call(data, "color")
-      ) {
+      if (target === "color") {
         colorPicker.value = data.color || "#000000";
+      }
+
+      if (
+        target === "background" &&
+        data.background &&
+        !data.background.startsWith("linear-gradient")
+      ) {
+        colorPicker.value = data.background;
       }
     });
   });
@@ -973,7 +1004,7 @@ clearBackgroundButton.addEventListener("click", () => {
 });
 
 
-function getSelectedPaintValue(target) {
+function getSelectedPaintValue() {
   if (backgroundType.value === "solid") {
     return colorPicker.value;
   }
@@ -984,8 +1015,6 @@ function getSelectedPaintValue(target) {
 
   return gradient;
 }
-
-
 
 function updateBackground() {
   const target = getColorTarget();
@@ -1079,10 +1108,12 @@ elementType.addEventListener("change", () => {
 function applyParagraphTypography() {
   if (!activeParagraphDraft) return;
 
-  const { textarea } = activeParagraphDraft;
+  const { textarea, settings } = activeParagraphDraft;
 
-  textarea.style.fontFamily = fontFamily.value;
-  textarea.style.fontSize = `${paragraphFontSize.value}px`;
+  textarea.style.fontFamily = settings.fontFamily;
+  textarea.style.fontSize = `${settings.fontSize}px`;
+  textarea.style.color = settings.color;
+  textarea.style.background = settings.background;
 }
 
 function syncTypographyControls() {
@@ -1255,7 +1286,13 @@ function updateSelectedParagraphProperty(property, value) {
 
 
 // Start of ParagraphHandler
+
 let activeParagraphDraft = null;
+
+let paragraphDraftPaint = {
+  color: "#000000",
+  background: "transparent"
+};
 
 function beginParagraphDraft(event) {
   // Allow only one unfinished paragraph at a time.
@@ -1265,6 +1302,9 @@ function beginParagraphDraft(event) {
 
   const draft = document.createElement("div");
   draft.className = "paragraph-draft";
+
+  const toolbar = document.createElement("div");
+  toolbar.className = "paragraph-draft-toolbar";
 
   const textarea = document.createElement("textarea");
   textarea.placeholder = "Write your paragraph...";
@@ -1281,25 +1321,145 @@ function beginParagraphDraft(event) {
   doneButton.type = "button";
   doneButton.textContent = "Done";
 
+  // Each draft gets its own settings, initialized from the last-used values.
+  const settings = {
+    color: paragraphDraftPaint.color,
+    background: paragraphDraftPaint.background,
+    fontFamily: fontFamily.value,
+    fontSize: Number(paragraphFontSize.value)
+  };
+
+  // Text color picker.
+  const textColor = document.createElement("input");
+  textColor.type = "color";
+  textColor.value = settings.color;
+
+  const textColorLabel = document.createElement("label");
+  textColorLabel.textContent = "Text color";
+  textColorLabel.appendChild(textColor);
+
+  // Background picker.
+  const backgroundColor = document.createElement("input");
+  backgroundColor.type = "color";
+
+  const transparentBackground = document.createElement("input");
+  transparentBackground.type = "checkbox";
+
+  const backgroundLabel = document.createElement("label");
+  backgroundLabel.textContent = "Background";
+  backgroundLabel.appendChild(backgroundColor);
+
+  const transparentLabel = document.createElement("label");
+  transparentLabel.textContent = "Transparent";
+  transparentLabel.appendChild(transparentBackground);
+
+  if (settings.background === "transparent") {
+    transparentBackground.checked = true;
+    backgroundColor.value = "#ffffff";
+  } else {
+    transparentBackground.checked = false;
+
+    // A color input cannot display a CSS gradient.
+    backgroundColor.value = settings.background.startsWith("#")
+      ? settings.background
+      : "#ffffff";
+  }
+
+  // Font family picker: reuse the options from your existing select.
+  const fontFamilySelect = fontFamily.cloneNode(true);
+  fontFamilySelect.removeAttribute("id");
+  fontFamilySelect.value = settings.fontFamily;
+
+  const fontFamilyLabel = document.createElement("label");
+  fontFamilyLabel.textContent = "Font";
+  fontFamilyLabel.appendChild(fontFamilySelect);
+
+  // Font size picker.
+  const fontSizeInput = paragraphFontSize.cloneNode(true);
+  fontSizeInput.removeAttribute("id");
+  fontSizeInput.value = String(settings.fontSize);
+
+  const fontSizeLabel = document.createElement("label");
+  fontSizeLabel.textContent = "Size";
+  fontSizeLabel.appendChild(fontSizeInput);
+
+  toolbar.append(
+    textColorLabel,
+    backgroundLabel,
+    transparentLabel,
+    fontFamilyLabel,
+    fontSizeLabel
+  );
+
   actions.append(cancelButton, doneButton);
-  draft.append(textarea, actions);
+  draft.append(toolbar, textarea, actions);
 
   draft.style.left = `${event.clientX - rect.left}px`;
   draft.style.top = `${event.clientY - rect.top}px`;
 
   canvas.appendChild(draft);
 
-  activeParagraphDraft = { draft, textarea };
+  activeParagraphDraft = {
+    draft,
+    textarea,
+    settings
+  };
 
+  // Apply the current settings to the preview.
   applyParagraphTypography();
+
+  // Text color updates.
+  textColor.addEventListener("input", () => {
+    settings.color = textColor.value;
+    paragraphDraftPaint.color = settings.color;
+
+    applyParagraphTypography();
+  });
+
+  // Background color updates.
+  backgroundColor.addEventListener("input", () => {
+    settings.background = backgroundColor.value;
+    transparentBackground.checked = false;
+
+    paragraphDraftPaint.background = settings.background;
+
+    applyParagraphTypography();
+  });
+
+  // Transparent background toggle.
+  transparentBackground.addEventListener("change", () => {
+    settings.background = transparentBackground.checked
+      ? "transparent"
+      : backgroundColor.value;
+
+    paragraphDraftPaint.background = settings.background;
+
+    applyParagraphTypography();
+  });
+
+  // Font family updates.
+  fontFamilySelect.addEventListener("change", () => {
+    settings.fontFamily = fontFamilySelect.value;
+
+    applyParagraphTypography();
+  });
+
+  // Font size updates.
+  fontSizeInput.addEventListener("input", () => {
+    settings.fontSize = Number(fontSizeInput.value);
+
+    applyParagraphTypography();
+  });
 
   textarea.focus();
 
+  // Cancel draft.
   cancelButton.addEventListener("click", () => {
     draft.remove();
     activeParagraphDraft = null;
   });
 
+  // Finish draft.
   doneButton.addEventListener("click", () => {
     const text = textarea.value.trim();
 
@@ -1311,18 +1471,28 @@ function beginParagraphDraft(event) {
     const elementData = {
       id: crypto.randomUUID(),
       type: "text",
+
       x: parseFloat(draft.style.left),
       y: parseFloat(draft.style.top),
-      width: draft.offsetWidth,
+
+      width: textarea.offsetWidth,
       height: textarea.scrollHeight,
+
       text,
-      fontFamily: fontFamily.value,
-      fontSize: Number(paragraphFontSize.value),
-      background: "transparent",
-      color: colorPicker.value,
+
+      fontFamily: settings.fontFamily,
+      fontSize: settings.fontSize,
+
+      color: settings.color,
+      background: settings.background,
+
       paddingX: 10,
       paddingY: 8
     };
+
+    // Retain the chosen colors for the next paragraph.
+    paragraphDraftPaint.color = settings.color;
+    paragraphDraftPaint.background = settings.background;
 
     draft.remove();
     activeParagraphDraft = null;
@@ -1342,26 +1512,8 @@ function beginParagraphDraft(event) {
   });
 }
 
-fontFamily.addEventListener("input", () => {
-  if (editorMode.value === "paragraph") {
-    applyParagraphTypography();
-    return;
-  }
-
-  if (editorMode.value === "edit") {
-    updateSelectedParagraphProperty(
-      "fontFamily",
-      fontFamily.value
-    );
-  }
-});
 
 paragraphFontSize.addEventListener("input", () => {
-  if (editorMode.value === "paragraph") {
-    applyParagraphTypography();
-    return;
-  }
-
   if (editorMode.value === "edit") {
     updateSelectedParagraphProperty(
       "fontSize",

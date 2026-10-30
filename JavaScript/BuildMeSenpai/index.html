@@ -82,13 +82,36 @@
       <option value="image" disabled>Image (coming soon)</option>
       <option value="button" disabled>Button (coming soon)</option>
     </select>
-    <label for="background-type">Background:</label>
+    <div class="color-target-toggle">
+      <label>
+        <input
+          type="radio"
+          name="colorTarget"
+          value="color"
+          checked
+        />
+        Color
+      </label>
+
+      <label>
+        <input
+          type="radio"
+          name="colorTarget"
+          value="background"
+        />
+        Background
+      </label>
+    </div>
+    <button type="button" id="clearBackgroundButton">
+      Transparent background
+    </button>
+    <label for="background-type">Color:</label>
     <select id="background-type">
       <option value="solid">Solid color</option>
       <option value="gradient">Gradient</option>
     </select>
     <div id="solid-controls">
-      <label for="color-picker">Color:</label>
+      <label for="color-picker"></label>
       <input type="color" id="color-picker" value="#3366ff">
     </div>
 
@@ -119,7 +142,7 @@
     </button>
   </div>
   <main id="website-canvas">
-    <div id="ghost-block"></div>
+    <div id="ghost-block" class="ghost-block"></div>
     <div id="selection-overlay" hidden></div>
   </main>
 </body>
