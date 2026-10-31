@@ -114,6 +114,8 @@ class ArticleMenu {
 
     this.selectedArticleId = null; // Which selected
     this.editingArticleId = null; // Which to edit
+
+    this.lastDeletedArticle = null;
   }
 
   getAll() {
@@ -145,25 +147,6 @@ class ArticleMenu {
     return Number(articleById.quantity) > 0 ? articleById.price : console.error("Varan slut bror, ring Maxim");
   }
 
-  /*
-  sortByName() {
-    this.articles.sort((a, b) => {
-      const nameA = a.name.toUpperCase(); // ignore upper and lowercase
-      const nameB = b.name.toUpperCase(); // ignore upper and lowercase
-
-      if (nameA < nameB) {
-        return -1;
-      }
-      if (nameA > nameB) {
-        return 1;
-      }
-
-      // names must be equal
-      return 0;
-    })
-  }
-   */
-
   addEntry(art_id, name, price, quant, cat) {
     const newArticle = {
       id: art_id,
@@ -183,11 +166,30 @@ class ArticleMenu {
 
     // IF exists
     if (index !== -1) {
+      this.lastDeletedArticle = {
+        article: { ...this.articles[index] },
+        index: index
+      };
       this.articles.splice(index, 1);
       this._isDirty = true;
       this.selectedArticleId = null;
       this.renderMenu("money-menu");
     }
+  }
+
+  undoDelete() {
+    if (!this.lastDeletedArticle) {
+      return;
+    }
+
+    // Put article back in list
+    this.articles.splice(this.lastDeletedArticle.index, 0, this.lastDeletedArticle.article);
+
+    // Nullify so can't undo multiples
+    this.lastDeletedArticle = null;
+
+    this._isDirty = true;
+    this.renderMenu("money-menu");
   }
 
   startEdit(art_id) {
@@ -239,6 +241,25 @@ class ArticleMenu {
     this.renderMenu("money-menu");
   }
 
+  /*
+  sortByName() {
+    this.articles.sort((a, b) => {
+      const nameA = a.name.toUpperCase(); // ignore upper and lowercase
+      const nameB = b.name.toUpperCase(); // ignore upper and lowercase
+
+      if (nameA < nameB) {
+        return -1;
+      }
+      if (nameA > nameB) {
+        return 1;
+      }
+
+      // names must be equal
+      return 0;
+    })
+  }
+   */
+
   getSortedArticles() {
 
     if (!this._isDirty && this._sortedCache) {
@@ -288,7 +309,7 @@ class ArticleMenu {
         <th data-sort="price" class="sortable">Pris SEK</th>
         <th data-sort="quantity" class="sortable">I lager</th>
         <th data-sort="category" class="sortable">Kategori</th>
-        <th>Åtgärd</th>
+        <th>Åtgärd <span id="regret" class="click-me">&#8634;</span></th>
       </tr>
     `;
 
@@ -537,4 +558,11 @@ document.getElementById("money-menu").addEventListener("click", (e) => {
   // ORDINARILY click - Render usual
   moneymeMenu.selectedArticleId = articleId;
   moneymeMenu.renderMenu("money-menu");
+});
+
+// Respect dynamic render where to add the eventListener
+document.addEventListener("click", (e) => {
+  if (e.target && e.target.id === "regret") {
+    moneymeMenu.undoDelete();
+  }
 });

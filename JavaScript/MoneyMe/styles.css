@@ -241,7 +241,7 @@ td, th {
 
 /* Stilar för klickbara tabellrader och action-knappar */
 #money-menu tr {
-  cursor: pointer;
+  cursor: default;
   transition: background-color 0.2s ease;
 }
 
@@ -252,6 +252,14 @@ td, th {
 #money-menu tr.selected {
   background-color: rgba(173, 255, 47, 0.25);
   border-left: 4px solid greenyellow;
+}
+
+#regret {
+  display: inline-block;
+  zoom: 1.6;
+  padding: 0px;
+  transform: rotate(-120deg);
+  margin-left: -4px;
 }
 
 .action-btn-group {
