@@ -169,6 +169,7 @@ table > tbody > tr > th, table > tbody > tr > td {
 
 .links-table tr td ul li {
   display: inline-block;
+  /* margin-bottom: 2px; */
 }
 
 .links-table tr td ul li:not(:last-child)::after {
@@ -213,6 +214,23 @@ table > tbody > tr > th, table > tbody > tr > td {
   display: inline-block;
   border-left: 1px solid #5b5f64;
   padding-left: 8px;
+}
+
+footer {
+  font-size: small;
+  margin-bottom: 80px;
+}
+
+footer p {
+  padding-bottom: 12px;
+}
+
+footer ul {
+  padding-left: 0px;
+}
+
+footer ul li {
+  display: inline-block;
 }
 
 /* Classes END */
