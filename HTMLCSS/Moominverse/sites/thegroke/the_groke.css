@@ -73,12 +73,50 @@ table > tbody > tr > th, table > tbody > tr > td {
   position: relative;
 }
 
+.info-card-row-header {
+  display: inline-block;
+  line-height: 1.2em;
+  padding: .1em 0;
+}
+
+#info-card-table br {
+  margin-bottom: 6px;
+}
+
 /* IDs END */
 
 /* Classes START */
 
+.pad-me-bottom {
+  padding-bottom: 6px;
+}
+
+.pad-me-bottom-big {
+  padding-bottom: 12px;
+}
+
+.pad-me-bottom-bigger {
+  padding-bottom: 16px;
+}
+
+.pad-me-top {
+  padding-top: 6px;
+}
+
+.pad-me-top-big {
+  padding-top: 12px;
+}
+
+.pad-me-top-bigger {
+  padding-top: 16px;
+}
+
 .text-center {
   text-align: center;
+}
+
+.red-link {
+  color: orange;
 }
 
 /* #43474a border color */
@@ -191,6 +229,21 @@ table > tbody > tr > th, table > tbody > tr > td {
 .selflink {
   color: white;
   font-weight: bold;
+}
+
+.table-voice {
+  border: 1px solid #43474a;
+  border-spacing: 0;
+}
+
+.table-voice tr th {
+  border: 1px solid #43474a;
+  background-color: #1f2024;
+}
+
+.table-voice tr td {
+  border: 1px solid #43474a;
+  padding: 4px;
 }
 
 #container-categories {
