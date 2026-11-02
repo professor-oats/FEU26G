@@ -393,7 +393,7 @@ function startPurchase(login = "Gäst") {
             cart.push(article);
           }
         } catch (error) {
-          console.log(`Kunde inte lägga till: ${error.message}`);
+          console.log(`Kunde inte lägga till: ${article} ${error.message}`);
         }
       });
     },
