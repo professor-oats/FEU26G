@@ -24,6 +24,14 @@ const paddingCss = document.getElementById("padding-css");
 const applyPaddingCssButton = document.getElementById("apply-padding-css");
 const paddingCssError = document.getElementById("padding-css-error");
 
+const colorControls = document.getElementById("color-controls");
+const imageControls = document.getElementById("image-controls");
+
+const imageUpload = document.getElementById("image-upload");
+const imageWidth = document.getElementById("image-width");
+const imageHeight = document.getElementById("image-height");
+const lockImageAspect = document.getElementById("lock-image-aspect");
+
 // EVENT LISTENERS
 backgroundType.addEventListener("change", updateBackgroundControls);
 gradientStart.addEventListener("input", updateBackground);
@@ -35,7 +43,100 @@ paddingX.addEventListener("input", handlePaddingXChange);
 paddingY.addEventListener("input", handlePaddingYChange);
 applyPaddingCssButton.addEventListener("click", handleApplyPaddingCss);
 
+/* Image upload related listeners */
 
+let uploadedImage = null;
+let imageAspectRatio = null;
+
+elementType.addEventListener("change", () => {
+  const isImage = elementType.value === "image";
+
+  colorControls.hidden = isImage;
+  imageControls.hidden = !isImage;
+
+  if (isImage) {
+    activeConfig.width = 640;
+    activeConfig.height = imageAspectRatio
+      ? Math.round(640 / imageAspectRatio)
+      : 360;
+
+    activeConfig.background = "#d3d3d3";
+    activeConfig.className = "ghost-block image-placeholder";
+
+    updateGhost();
+  }
+});
+
+imageUpload.addEventListener("change", (event) => {
+  const file = event.target.files[0];
+
+  if (!file || !file.type.startsWith("image/")) return;
+
+  const reader = new FileReader();
+
+  reader.onload = () => {
+    const img = new Image();
+
+    img.onload = () => {
+      uploadedImage = reader.result;
+
+      imageAspectRatio = img.naturalWidth / img.naturalHeight;
+
+      const width = 640;
+      const height = Math.round(width / imageAspectRatio);
+
+      imageWidth.value = width;
+      imageHeight.value = height;
+
+      activeConfig.width = width;
+      activeConfig.height = height;
+      activeConfig.background = `url("${uploadedImage}")`;
+      activeConfig.className = "ghost-block image-preview";
+
+      updateGhost();
+    };
+
+    img.src = reader.result;
+  };
+
+  reader.readAsDataURL(file);
+});
+
+imageWidth.addEventListener("input", () => {
+  const width = Number(imageWidth.value);
+
+  if (!width || width < 1) return;
+
+  activeConfig.width = width;
+
+  if (lockImageAspect.checked && imageAspectRatio) {
+    const height = Math.round(width / imageAspectRatio);
+
+    imageHeight.value = height;
+    activeConfig.height = height;
+  }
+
+  updateGhost();
+});
+
+imageHeight.addEventListener("input", () => {
+  const height = Number(imageHeight.value);
+
+  if (!height || height < 1) return;
+
+  activeConfig.height = height;
+
+  if (lockImageAspect.checked && imageAspectRatio) {
+    const width = Math.round(height * imageAspectRatio);
+
+    imageWidth.value = width;
+    activeConfig.width = width;
+  }
+
+  updateGhost();
+});
+
+/* colorPicker listener */
 
 colorPicker.addEventListener("input", () => {
   const target = getColorTarget();
@@ -1018,11 +1119,29 @@ function updateGhost() {
     ghostBlock.style.display = "none";
     return;
   }
+
+  ghostBlock.style.display = "block";
+
   ghostBlock.style.width = activeConfig.width + "px";
   ghostBlock.style.height = activeConfig.height + "px";
-  ghostBlock.style.background = activeConfig.background;
 
   ghostBlock.className = activeConfig.className;
+
+  if (elementType.value === "image") {
+    if (uploadedImage) {
+      ghostBlock.style.backgroundImage = `url("${uploadedImage}")`;
+      ghostBlock.style.backgroundSize = "100% 100%";
+      ghostBlock.style.backgroundRepeat = "no-repeat";
+      ghostBlock.style.backgroundPosition = "center";
+    } else {
+      ghostBlock.style.backgroundImage = "none";
+      ghostBlock.style.backgroundColor = "#d3d3d3";
+    }
+
+    return;
+  }
+
+  ghostBlock.style.background = activeConfig.background;
 }
 
 // Recalculate the required canvas height

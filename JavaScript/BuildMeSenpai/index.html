@@ -78,10 +78,11 @@
     <label for="element-type">Element:</label>
     <select id="element-type">
       <option value="header">Header</option>
+      <option value="image">Image</option>
       <option value="text" disabled>Text block (coming soon)</option>
-      <option value="image" disabled>Image (coming soon)</option>
       <option value="button" disabled>Button (coming soon)</option>
     </select>
+    <div id="color-controls">
     <div class="color-target-toggle">
       <label>
         <input
@@ -131,6 +132,44 @@
         <option value="to bottom right">Diagonal</option>
         <option value="to bottom left">Reverse diagonal</option>
       </select>
+    </div>
+    </div>
+    <div id="image-controls" hidden>
+      <label for="image-upload">Upload image:</label>
+      <input
+        type="file"
+        id="image-upload"
+        accept="image/*"
+      >
+
+      <div class="image-dimension-row">
+        <label for="image-width">Width (px):</label>
+        <input
+          type="number"
+          id="image-width"
+          min="1"
+          value="640"
+        >
+      </div>
+
+      <div class="image-dimension-row">
+        <label for="image-height">Height (px):</label>
+        <input
+          type="number"
+          id="image-height"
+          min="1"
+          value="auto"
+        >
+      </div>
+
+      <label>
+        <input
+          type="checkbox"
+          id="lock-image-aspect"
+          checked
+        >
+        Lock aspect ratio
+      </label>
     </div>
     <button id="save-project">Save Version</button>
 

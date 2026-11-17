@@ -172,45 +172,7 @@ body {
   position: absolute;
 }
 
-/*
-.paragraph-draft {
-  position: absolute;
-  z-index: 1000;
-  width: 320px;
-  background: white;
-  border: 1px solid #888;
-  box-shadow: 0 2px 8px rgb(0 0 0 / 15%);
-}
-
-.paragraph-draft textarea {
-  display: block;
-  box-sizing: border-box;
-  width: 100%;
-  min-height: 100px;
-  padding: 10px;
-  border: none;
-  outline: none;
-  resize: vertical;
-  background: white;
-  color: #000000;
-  line-height: 1.5;
-  overflow-wrap: break-word;
-}
-
-.paragraph-draft-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 6px;
-  padding: 6px;
-  border-top: 1px solid #ddd;
-  background: #f7f7f7;
-}
-
-.paragraph-draft-actions button {
-  cursor: pointer;
-  padding: 5px 10px;
-}
- */
+/* paragraph draft styling */
 
 .paragraph-draft {
   position: absolute;
@@ -305,6 +267,8 @@ body {
   box-sizing: border-box;
 }
 
+/* paragraph padding control */
+
 #padding-controls {
   display: flex;
   flex-direction: column;
@@ -356,3 +320,36 @@ body {
   color: #b00020;
 }
 
+/* Image styling here */
+
+#image-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+#image-controls[hidden] {
+  display: none;
+}
+
+.image-dimension-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.image-dimension-row input {
+  width: 75px;
+}
+
+.ghost-block.image-placeholder {
+  background: #d3d3d3;
+  background-image: none;
+}
+
+.ghost-block.image-preview {
+  background-color: transparent;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 100% 100%;
+}
