@@ -300,6 +300,9 @@ body {
 /* Text inside a created paragraph. */
 .text-content {
   white-space: pre-wrap;
+  display: inline-block;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 #padding-controls {

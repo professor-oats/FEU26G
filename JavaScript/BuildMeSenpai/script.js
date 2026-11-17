@@ -1043,6 +1043,37 @@ elementType.addEventListener("change", () => {
 
 });
 
+// Helper for paragraph handler
+// Measure paragraph text width without displaying the measuring element.
+function measureParagraphText(textarea) {
+  const measure = document.createElement("span");
+
+  const styles = window.getComputedStyle(textarea);
+
+  measure.style.position = "absolute";
+  measure.style.visibility = "hidden";
+  measure.style.whiteSpace = "pre";
+  measure.style.width = "max-content";
+  measure.style.height = "auto";
+
+  measure.style.fontFamily = styles.fontFamily;
+  measure.style.fontSize = styles.fontSize;
+  measure.style.fontWeight = styles.fontWeight;
+  measure.style.fontStyle = styles.fontStyle;
+  measure.style.letterSpacing = styles.letterSpacing;
+  measure.style.textTransform = styles.textTransform;
+
+  measure.textContent = textarea.value || " ";
+
+  document.body.appendChild(measure);
+
+  const width = measure.getBoundingClientRect().width;
+
+  measure.remove();
+
+  return width;
+}
+
 // Helper function for the paragraphHandler
 function applyParagraphTypography() {
   if (!activeParagraphDraft) return;
@@ -1055,12 +1086,29 @@ function applyParagraphTypography() {
   const textIsGradient = isGradientValue(settings.color);
   const backgroundIsGradient = isGradientValue(settings.background);
 
+  // Measure the actual typed text.
+  const measuredTextWidth = measureParagraphText(textarea);
+
+// Include textarea padding so the gradient starts at the text position.
+  const textareaStyles = window.getComputedStyle(textarea);
+
+  const textStartOffset =
+    parseFloat(textareaStyles.paddingLeft) || 0;
+
+  const gradientWidth = Math.max(
+    1,
+    measuredTextWidth
+  );
+
   // Reset previous preview paint on both elements
   textarea.style.backgroundImage = "none";
   textarea.style.backgroundClip = "";
   textarea.style.webkitBackgroundClip = "";
   textarea.style.MozBackgroundClip = "";
   textarea.style.backgroundOrigin = "";
+  textarea.style.backgroundSize = "";
+  textarea.style.backgroundRepeat = "";
+  textarea.style.backgroundPosition = "";
 
   if (textareaWrap) {
     textareaWrap.style.backgroundImage = "none";
@@ -1072,10 +1120,20 @@ function applyParagraphTypography() {
     textarea.style.color = settings.color || "#000000";
     textarea.style.webkitTextFillColor = settings.color || "#000000";
   } else {
-    // Gradient text needs transparent text fill to show the gradient
+    // Gradient text needs transparent text fill.
     textarea.style.color = "transparent";
     textarea.style.webkitTextFillColor = "transparent";
+
     textarea.style.backgroundImage = settings.color;
+
+    // Restrict gradient to measured text width.
+    textarea.style.backgroundSize =
+      `${gradientWidth}px 100%`;
+
+    textarea.style.backgroundRepeat = "no-repeat";
+    textarea.style.backgroundPosition =
+      `${textStartOffset}px top`;
+
     textarea.style.backgroundClip = "text";
     textarea.style.webkitBackgroundClip = "text";
     textarea.style.MozBackgroundClip = "text";
@@ -1238,6 +1296,9 @@ function beginParagraphDraft(event) {
   textarea.setAttribute("aria-label", "Paragraph text");
 
   textareaWrap.appendChild(textarea);
+  textarea.addEventListener("input", () => {
+    applyParagraphTypography();
+  });
 
   const actions = document.createElement("div");
   actions.className = "paragraph-draft-actions";
