@@ -15,6 +15,11 @@ const gradientEnd = document.getElementById("gradient-end");
 const gradientDirection = document.getElementById("gradient-direction");
 const selectionOverlay = document.getElementById("selection-overlay");
 
+const backgroundControls = document.getElementById("background-controls");
+const fontFamilyControls = document.getElementById("font-family-controls");
+const fontSizeControls = document.getElementById("font-size-controls");
+const textControls = document.getElementById("text-controls");
+
 const paddingControls = document.getElementById("padding-controls");
 const paddingX = document.getElementById("padding-x");
 const paddingY = document.getElementById("padding-y");
@@ -37,7 +42,7 @@ backgroundType.addEventListener("change", updateBackgroundControls);
 gradientStart.addEventListener("input", updateBackground);
 gradientEnd.addEventListener("input", updateBackground);
 gradientDirection.addEventListener("change", updateBackground);
-gradientDirection.addEventListener("change", updateBackgroundControls);
+// gradientDirection.addEventListener("change", updateBackgroundControls);
 
 paddingX.addEventListener("input", handlePaddingXChange);
 paddingY.addEventListener("input", handlePaddingYChange);
@@ -47,25 +52,6 @@ applyPaddingCssButton.addEventListener("click", handleApplyPaddingCss);
 
 let uploadedImage = null;
 let imageAspectRatio = null;
-
-elementType.addEventListener("change", () => {
-  const isImage = elementType.value === "image";
-
-  colorControls.hidden = isImage;
-  imageControls.hidden = !isImage;
-
-  if (isImage) {
-    activeConfig.width = 640;
-    activeConfig.height = imageAspectRatio
-      ? Math.round(640 / imageAspectRatio)
-      : 360;
-
-    activeConfig.background = "#d3d3d3";
-    activeConfig.className = "ghost-block image-placeholder";
-
-    updateGhost();
-  }
-});
 
 imageUpload.addEventListener("change", (event) => {
   const file = event.target.files[0];
@@ -139,6 +125,26 @@ imageHeight.addEventListener("input", () => {
 /* colorPicker listener */
 
 colorPicker.addEventListener("input", () => {
+  // EDIT MODE
+  if (editorMode.value === "edit" && selectedElementId) {
+    const target = getColorTarget();
+
+    if (target === "color") {
+      updateSelectedElementProperty("color", colorPicker.value);
+    } else {
+      updateBackground();
+    }
+    return;
+  }
+
+  // PLACE MODE
+  if (editorMode.value === "place") {
+    updateBackground();
+  }
+});
+
+/*
+colorPicker.addEventListener("input", () => {
   const target = getColorTarget();
 
   if (editorMode.value === "edit" && selectedElementId) {
@@ -156,6 +162,7 @@ colorPicker.addEventListener("input", () => {
     updateGhost();
   }
 });
+ */
 
 editorMode.addEventListener("change", () => {
   if (editorMode.value === "paragraph") {
@@ -172,13 +179,26 @@ editorMode.addEventListener("change", () => {
 
     applyParagraphTypography();
   }
+  /*
   else if (editorMode.value === "place" && activeType === "header") {
     // Restore the header's saved color in the picker.
     colorPicker.value = elementConfigs.header.background;
   }
 
+   */
+
+  else if (editorMode.value === "place") {
+    activeType = elementType.value;
+
+    if (activeType !== "image") {
+      activeConfig = { ...elementConfigs[activeType] };
+      syncPaintControlsTo(activeConfig, activeType);
+    }
+  }
+
   updateEditorMode();
   updateToolbarForSelection();
+
 });
 
 const toggleSmartGuidesButton = document.getElementById(
@@ -332,12 +352,29 @@ function applyParagraphTextColor(element, data) {
   }
 }
 
+function setActiveElementType(type) {
+  activeType = type;
+
+  // Always create a fresh copy of the default configuration.
+  activeConfig = {
+    ...elementConfigs[type]
+  };
+
+  // Reset image-specific state when switching element types.
+  if (type !== "image") {
+    uploadedImage = null;
+    imageAspectRatio = null;
+  }
+
+  // Update the ghost preview.
+  updateGhost();
+}
 
 function renderElement(data) {
   const config = elementConfigs[data.type];
   const element = document.createElement("div");
 
-  element.classList.add("element", config.className);
+  element.classList.add("element", ...config.className.split(/\s+/));
   element.dataset.id = data.id;
 
   element.style.left = data.x + "px";
@@ -368,6 +405,25 @@ function renderElement(data) {
     element.appendChild(textContent);
 
     applyParagraphTextColor(element, data);
+  }
+
+
+  if (data.type === "image") {
+
+    element.style.background = "transparent";
+    element.style.overflow = "hidden";
+
+    const img = document.createElement("img");
+
+    img.src = data.imageData;
+    img.alt = data.alt || "Uploaded image";
+
+    img.style.width = "100%";
+    img.style.height = "100%";
+    img.style.objectFit = data.objectFit || "contain";
+    img.style.display = "block";
+
+    element.appendChild(img);
   }
 
   canvas.appendChild(element);
@@ -703,7 +759,8 @@ function selectElement(element) {
 
   selectedElementData = data;
   activeType = data.type;
-  activeConfig = elementConfigs[activeType];
+  //activeConfig = elementConfigs[activeType];
+  activeConfig = { ...elementConfigs[activeType] };
 
   if (data.type === "text") {
     fontFamily.value = data.fontFamily || "Arial";
@@ -711,6 +768,7 @@ function selectElement(element) {
     syncPaddingControls(data);
   }
 
+  syncPaintControlsTo(data, data.type);
   updateToolbarForSelection();
   updateSelectionOverlay();
 }
@@ -994,6 +1052,47 @@ function getColorTarget() {
   )?.value || "color";
 }
 
+const GRADIENT_RE =
+  /^linear-gradient\(([^,]+),\s*(#[0-9a-fA-F]{3,8}),\s*(#[0-9a-fA-F]{3,8})\)$/;
+
+// Make the paint controls mirror a config or element's current paint.
+// Does NOT call updateBackground(), so it has no side effects on data.
+function syncPaintControlsTo(source, type) {
+  const editable = elementConfigs[type]?.editableProperties || [];
+
+  // Pick a radio the element type actually supports.
+  let target = getColorTarget();
+  if (!editable.includes("color")) target = "background";
+  else if (!editable.includes("background")) target = "color";
+
+  const radio = document.querySelector(
+    `input[name="colorTarget"][value="${target}"]`
+  );
+  if (radio) radio.checked = true;
+
+  const paint = source[target];
+  const gradient =
+    typeof paint === "string" ? paint.match(GRADIENT_RE) : null;
+
+  if (gradient) {
+    backgroundType.value = "gradient";
+    gradientDirection.value = gradient[1].trim();
+    gradientStart.value = gradient[2];
+    gradientEnd.value = gradient[3];
+    solidControls.hidden = true;
+    gradientControls.hidden = false;
+  } else {
+    backgroundType.value = "solid";
+    solidControls.hidden = false;
+    gradientControls.hidden = true;
+
+    // <input type="color"> only accepts #rrggbb; ignore "transparent" etc.
+    if (/^#[0-9a-fA-F]{6}$/.test(paint || "")) {
+      colorPicker.value = paint;
+    }
+  }
+}
+
 document.querySelectorAll('input[name="colorTarget"]')
   .forEach((radio) => {
     radio.addEventListener("change", () => {
@@ -1021,17 +1120,7 @@ document.querySelectorAll('input[name="colorTarget"]')
 
       if (!data) return;
 
-      if (target === "color") {
-        colorPicker.value = data.color || "#000000";
-      }
-
-      if (
-        target === "background" &&
-        data.background &&
-        !data.background.startsWith("linear-gradient")
-      ) {
-        colorPicker.value = data.background;
-      }
+      syncPaintControlsTo(data, data.type);
     });
   });
 
@@ -1067,9 +1156,16 @@ function getSelectedPaintValue() {
 function updateBackground() {
   const target = getColorTarget();
 
-  const selectedData = selectedElementId
-    ? project.elements.find((item) => item.id === selectedElementId)
-    : null;
+  const paint =
+    backgroundType.value === "solid"
+      ? colorPicker.value
+      : `linear-gradient(${gradientDirection.value}, ${gradientStart.value}, ${gradientEnd.value})`;
+
+  // Only treat a selection as the target while actually in Edit mode.
+  const selectedData =
+    editorMode.value === "edit" && selectedElementId
+      ? project.elements.find((item) => item.id === selectedElementId)
+      : null;
 
   if (selectedData) {
     const property = target === "color" ? "color" : "background";
@@ -1077,25 +1173,24 @@ function updateBackground() {
 
     if (!config?.editableProperties?.includes(property)) return;
 
-    const value =
-      backgroundType.value === "solid"
-        ? colorPicker.value
-        : `linear-gradient(${gradientDirection.value}, ${gradientStart.value}, ${gradientEnd.value})`;
-
-    updateSelectedElementProperty(property, value);
+    updateSelectedElementProperty(property, paint);
     return;
   }
 
-  const config = elementConfigs.header;
+  // PLACE MODE: update the ghost's active config AND the saved default.
+  if (activeType === "image") return;
 
-  if (backgroundType.value === "solid") {
-    config.background = colorPicker.value;
-  } else {
-    config.background =
-      `linear-gradient(${gradientDirection.value}, ${gradientStart.value}, ${gradientEnd.value})`;
-  }
+  // If the type has no "color" property (e.g. header), fall back to background.
+  const property =
+    target === "color" &&
+    activeConfig.editableProperties.includes("color")
+      ? "color"
+      : "background";
 
-  if (activeType === "header") updateGhost();
+  activeConfig[property] = paint;
+  elementConfigs[activeType][property] = paint;
+
+  updateGhost();
 
   project.background.type = backgroundType.value;
   project.background.color = colorPicker.value;
@@ -1154,6 +1249,45 @@ function updateCanvasHeight() {
 }
 
 // Update the active element type
+
+elementType.addEventListener("change", () => {
+  const type = elementType.value;
+  const isImage = type === "image";
+
+  // Fresh copy of the defaults; also resets image state for non-image types.
+  setActiveElementType(type);
+
+  colorControls.hidden = isImage;
+  imageControls.hidden = !isImage;
+
+  if (isImage) {
+    activeConfig.width = 640;
+    activeConfig.height = imageAspectRatio
+      ? Math.round(640 / imageAspectRatio)
+      : 360;
+    activeConfig.background = "#d3d3d3";
+    activeConfig.className = "ghost-block image-placeholder";
+  } else {
+    syncPaintControlsTo(activeConfig, type);
+  }
+
+  updateGhost();
+});
+
+/*
+elementType.addEventListener("change", () => {
+  activeType = elementType.value;
+
+  activeConfig = {
+    ...elementConfigs[activeType]
+  };
+
+  updateGhost();
+});
+
+ */
+
+/*
 elementType.addEventListener("change", () => {
   activeType = elementType.value;
   activeConfig = elementConfigs[activeType];
@@ -1161,6 +1295,7 @@ elementType.addEventListener("change", () => {
   updateGhost();
 
 });
+ */
 
 // Helper for paragraph handler
 // Measure paragraph text width without displaying the measuring element.
@@ -1762,6 +1897,7 @@ paragraphFontSize.addEventListener("input", () => {
   }
 });
 
+/* Rest of program logic here and listeners */
 
 // Move the ghost with the cursor
 canvas.addEventListener("mousemove", (event) => {
@@ -1790,6 +1926,89 @@ function limitHistory(stack) {
 
 // This is our placeHandler
 
+
+canvas.addEventListener("click", (event) => {
+  // Ignore clicks inside the temporary paragraph editor.
+  if (event.target.closest(".paragraph-draft")) return;
+
+  // Paragraph mode opens the text editor.
+  if (editorMode.value === "paragraph") {
+    beginParagraphDraft(event);
+    return;
+  }
+
+  if (editorMode.value === "edit") {
+    // Clicking a resize handle should not clear the selection.
+    if (event.target.closest("#selection-overlay")) return;
+
+    const element = event.target.closest(".element");
+
+    if (element && canvas.contains(element)) {
+      selectElement(element);
+    } else {
+      selectedElementId = null;
+      updateSelectionOverlay();
+    }
+
+    return;
+  }
+
+  // Only Place mode can create regular elements.
+  if (editorMode.value !== "place") return;
+
+  const rect = canvas.getBoundingClientRect();
+
+  // Create element data using the existing structure.
+  const elementData = {
+    id: crypto.randomUUID(),
+    type: activeType,
+
+    x: event.clientX - rect.left,
+    y: event.clientY - rect.top,
+
+    width: activeConfig.width,
+    height: activeConfig.height,
+
+    background: activeConfig.background,
+    color: activeConfig.color
+  };
+
+  // IMAGE-SPECIFIC DATA
+  if (activeType === "image") {
+
+    if (!uploadedImage) {
+      alert("Please upload an image first.");
+      return;
+    }
+
+    elementData.imageData = uploadedImage;
+    elementData.objectFit = "contain";
+    elementData.alt = "Uploaded image";
+  }
+
+  // Store element in project.
+  project.elements.push(elementData);
+
+  // Add placement to undo history.
+  undoStack.push({
+    type: "place",
+    element: structuredClone(elementData)
+  });
+
+  limitHistory(undoStack);
+
+  // Clear redo history.
+  redoStack.length = 0;
+
+  // Render the placed element.
+  renderElement(elementData);
+
+  // Update canvas dimensions.
+  updateCanvasHeight();
+});
+
+
+/*
 canvas.addEventListener("click", (event) => {
   // Ignore clicks inside the temporary paragraph editor.
   if (event.target.closest(".paragraph-draft")) return;
@@ -1845,6 +2064,8 @@ canvas.addEventListener("click", (event) => {
   renderElement(elementData);
   updateCanvasHeight();
 });
+
+ */
 
 // Start of our moveHandler
 let activeDrag = null;
@@ -2268,7 +2489,8 @@ function undoAction() {
 
     if (restoredElement) {
       activeType = restoredElement.type;
-      activeConfig = elementConfigs[activeType];
+      //activeConfig = elementConfigs[activeType];
+      activeConfig = { ...elementConfigs[activeType] };
     }
   }
 
@@ -2545,6 +2767,8 @@ restoreButton.addEventListener("click", restoreProjectVersion);
 loadSavedVersions();
 updateBackgroundControls();
 editorMode.value = "place";
+elementType.value = "header";
+setActiveElementType("header");
 updateEditorMode();
 updateGhost();
 renderProject();
