@@ -2093,6 +2093,7 @@ canvas.addEventListener("click", (event) => {
     }
 
     elementData.imageData = uploadedImage;
+    elementData.aspectRatio = imageAspectRatio || elementData.width / elementData.height;
     elementData.objectFit = "contain";
     elementData.alt = "Uploaded image";
   }
@@ -2193,12 +2194,26 @@ canvas.addEventListener("mousedown", (event) => {
       event.preventDefault();
       event.stopPropagation();
 
+      // Natural ratio of the picture itself (works for old images too).
+      let aspect = null;
+
+      if (data.type === "image") {
+        const img = domById.get(data.id)?.querySelector("img");
+
+        aspect =
+          data.aspectRatio ||
+          (img?.naturalWidth && img.naturalHeight
+            ? img.naturalWidth / img.naturalHeight
+            : data.width / data.height);
+      }
+
       activeResize = {
         id: data.id,
         corner: handle.dataset.corner,
         startMouseX: event.clientX,
         startMouseY: event.clientY,
         started: false,
+        aspect,
         before: {
           x: data.x,
           y: data.y,
@@ -2288,72 +2303,96 @@ function handleDocumentMouseMove(event) {
     const fromWest = resize.corner.includes("w");
     const fromNorth = resize.corner.includes("n");
 
-    const newWidth = Math.max(
-      40,
-      width + (fromWest ? -dx : dx)
-    );
+    const sx = fromWest ? -1 : 1;
+    const sy = fromNorth ? -1 : 1;
 
-    const newHeight = Math.max(
-      30,
-      height + (fromNorth ? -dy : dy)
-    );
+    // Locked when the checkbox is on; Shift flips it for this drag.
+    const locked =
+      Boolean(resize.aspect) &&
+      lockImageAspect.checked !== event.shiftKey;
 
-    // Update the project data while dragging.
+    let newWidth;
+    let newHeight;
+
+    if (locked) {
+      // Follow whichever axis the mouse has moved further.
+      const scale = Math.max(
+        (width + sx * dx) / width,
+        (height + sy * dy) / height
+      );
+
+      newWidth = Math.max(40, 30 * resize.aspect, width * scale);
+      newHeight = newWidth / resize.aspect;
+    } else {
+      newWidth = Math.max(40, width + sx * dx);
+      newHeight = Math.max(30, height + sy * dy);
+    }
+
     data.width = newWidth;
     data.height = newHeight;
 
-    // Keep the opposite corner in the same position.
-    data.x =
-      x + (fromWest ? -1 : 1) * (newWidth - width) / 2;
+    // Keep the opposite corner fixed.
+    data.x = x + sx * (newWidth - width) / 2;
+    data.y = y + sy * (newHeight - height) / 2;
 
-    data.y =
-      y + (fromNorth ? -1 : 1) * (newHeight - height) / 2;
-
-
-    // Find alignments for the edges currently being dragged.
     const xEdge = fromWest ? "left" : "right";
     const yEdge = fromNorth ? "top" : "bottom";
 
-    const xMatch = smartGuidesEnabled
+    let xMatch = smartGuidesEnabled
       ? findBestResizeAlignment(data, "x", xEdge)
       : null;
 
-    const yMatch = smartGuidesEnabled
+    let yMatch = smartGuidesEnabled
       ? findBestResizeAlignment(data, "y", yEdge)
       : null;
 
-    // Snap the dragged vertical edge.
-    if (xMatch) {
-      const oldWidth = data.width;
+    if (locked) {
+      // Smallest size that still respects the minimums at this ratio.
+      const minWidth = Math.max(40, 30 * resize.aspect);
+      const minHeight = minWidth / resize.aspect;
 
-      data.width = Math.max(
-        40,
-        data.width + (fromWest ? -xMatch.delta : xMatch.delta)
-      );
+      // Snap on whichever axis is closer; the other follows the ratio.
+      const useX = xMatch && (!yMatch || xMatch.distance <= yMatch.distance);
+      const useY = !useX && yMatch;
 
-      // Keep the opposite edge anchored, including at minimum width.
-      const appliedDelta = fromWest
-        ? oldWidth - data.width
-        : data.width - oldWidth;
+      if (useX) {
+        const oldWidth = data.width;
+        const oldHeight = data.height;
 
-      data.x += appliedDelta / 2;
-    }
+        data.width = Math.max(minWidth, data.width + sx * xMatch.delta);
+        data.height = data.width / resize.aspect;
 
-    // Snap the dragged horizontal edge.
-    if (yMatch) {
-      const oldHeight = data.height;
+        data.x += sx * (data.width - oldWidth) / 2;
+        data.y += sy * (data.height - oldHeight) / 2;
 
-      data.height = Math.max(
-        30,
-        data.height + (fromNorth ? -yMatch.delta : yMatch.delta)
-      );
+        yMatch = null; // the height is derived, so no guide for it
+      } else if (useY) {
+        const oldWidth = data.width;
+        const oldHeight = data.height;
 
-      // Keep the opposite edge anchored, including at minimum height.
-      const appliedDelta = fromNorth
-        ? oldHeight - data.height
-        : data.height - oldHeight;
+        data.height = Math.max(minHeight, data.height + sy * yMatch.delta);
+        data.width = data.height * resize.aspect;
 
-      data.y += appliedDelta / 2;
+        data.x += sx * (data.width - oldWidth) / 2;
+        data.y += sy * (data.height - oldHeight) / 2;
+
+        xMatch = null; // the width is derived, so no guide for it
+      }
+    } else {
+      // Free resize: each edge snaps independently.
+      if (xMatch) {
+        const oldWidth = data.width;
+
+        data.width = Math.max(40, data.width + sx * xMatch.delta);
+        data.x += sx * (data.width - oldWidth) / 2;
+      }
+
+      if (yMatch) {
+        const oldHeight = data.height;
+
+        data.height = Math.max(30, data.height + sy * yMatch.delta);
+        data.y += sy * (data.height - oldHeight) / 2;
+      }
     }
 
     // Show the matching guides during resize.
