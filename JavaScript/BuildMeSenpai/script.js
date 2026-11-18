@@ -460,6 +460,12 @@ function renderElement(data, parent = canvas) {
   if (data.type === "text") {
     element.style.fontFamily = data.fontFamily || "Arial";
     element.style.fontSize = `${data.fontSize || 16}px`;
+    element.style.boxSizing = "border-box";
+    element.style.whiteSpace = "pre-wrap";
+    element.style.overflowWrap = "break-word";
+    element.style.lineHeight = "1.5";
+    element.style.textAlign = "left";
+    element.style.display = "block";
 
     const p = getParagraphPadding(data);
 
@@ -468,6 +474,7 @@ function renderElement(data, parent = canvas) {
 
     const textContent = document.createElement("span");
     textContent.className = "text-content";
+    textContent.style.display = "block";
     textContent.textContent = data.text || "";
 
     element.appendChild(textContent);
@@ -577,6 +584,7 @@ function updateRenderedElement(data, changedProperties = null) {
     if (!textContent) {
       textContent = document.createElement("span");
       textContent.className = "text-content";
+      textContent.style.display = "block";
       element.appendChild(textContent);
     }
 
