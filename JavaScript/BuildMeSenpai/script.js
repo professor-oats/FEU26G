@@ -40,6 +40,7 @@ const lockImageAspect = document.getElementById("lock-image-aspect");
 const exportButton = document.getElementById("export-project");
 const importButton = document.getElementById("import-project");
 const importInput = document.getElementById("import-project-input");
+const exportHtmlButton = document.getElementById("export-html");
 
 const WEBSON_FORMAT = "webson";
 const WEBSON_VERSION = 1;
@@ -2427,8 +2428,12 @@ function deleteSelectedElement() {
 // Helper function for undo history
 
 function refreshAfterHistoryAction(action) {
-  // Adding or removing elements changes the canvas structure.
-  if (action.type === "place" || action.type === "delete") {
+
+  if (
+    action.type === "place" ||
+    action.type === "delete" ||
+    action.type === "reorder"
+  ) {
     renderProject();
     return;
   }
@@ -2465,6 +2470,51 @@ function refreshAfterHistoryAction(action) {
     }
   }
 
+}
+
+/* Logic for pushing elements to front and back in the project array
+   Affects display hierarchy
+ */
+
+// Move an element to a specific position in the stacking order.
+function moveElementToIndex(id, toIndex) {
+  const from = project.elements.findIndex((item) => item.id === id);
+  if (from === -1) return;
+
+  const [item] = project.elements.splice(from, 1);
+  project.elements.splice(toIndex, 0, item);
+}
+
+// direction: +1 = forward (toward the top), -1 = backward.
+function reorderSelectedElement(direction) {
+  if (editorMode.value !== "edit" || !selectedElementId) return;
+
+  const index = project.elements.findIndex(
+    (item) => item.id === selectedElementId
+  );
+  if (index === -1) return;
+
+  const newIndex = Math.min(
+    project.elements.length - 1,
+    Math.max(0, index + direction)
+  );
+
+  // Already at the front or back.
+  if (newIndex === index) return;
+
+  moveElementToIndex(selectedElementId, newIndex);
+
+  undoStack.push({
+    type: "reorder",
+    id: selectedElementId,
+    before: index,
+    after: newIndex
+  });
+
+  limitHistory(undoStack);
+  redoStack.length = 0;
+
+  renderProject();
 }
 
 
@@ -2530,6 +2580,10 @@ function undoAction() {
     if (element) {
       Object.assign(element, action.before);
     }
+  }
+
+  else if (action.type === "reorder") {
+    moveElementToIndex(action.id, action.before);
   }
 
 
@@ -2610,6 +2664,9 @@ function redoAction() {
     }
   }
 
+  else if (action.type === "reorder") {
+    moveElementToIndex(action.id, action.after);
+  }
 
   else if (action.type === "property") {
     const element = project.elements.find(
@@ -2664,6 +2721,27 @@ document.addEventListener("keydown", (event) => {
     event.preventDefault();
     deleteSelectedElement();
     return;
+  }
+
+  // Stacking order: + brings forward, - sends backward.
+  // Ctrl/Cmd are excluded so browser zoom (Ctrl +/-) keeps working.
+  if (
+    editorMode.value === "edit" &&
+    selectedElementId &&
+    !modifierPressed &&
+    !event.altKey
+  ) {
+    if (event.key === "+" || event.key === "=") {
+      event.preventDefault();
+      reorderSelectedElement(1);
+      return;
+    }
+
+    if (event.key === "-" || event.key === "_") {
+      event.preventDefault();
+      reorderSelectedElement(-1);
+      return;
+    }
   }
 
   if (!modifierPressed) return;
@@ -2940,6 +3018,185 @@ importInput.addEventListener("change", async () => {
 });
 
 exportButton.addEventListener("click", exportProject);
+
+// Export helpers
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+const SAFE_PAINT_RE =
+  /^(transparent|#[0-9a-fA-F]{3,8}|linear-gradient\([a-z\s]+,\s*#[0-9a-fA-F]{3,8},\s*#[0-9a-fA-F]{3,8}\))$/;
+
+function safePaint(value, fallback) {
+  const paint = typeof value === "string" ? value.trim() : "";
+  return SAFE_PAINT_RE.test(paint) ? paint : fallback;
+}
+
+function safeFont(value) {
+  return typeof value === "string" && /^[\w\s,'"-]+$/.test(value)
+    ? value
+    : "Arial";
+}
+
+function getExportHeight(data) {
+  return data.type === "text"
+    ? measureParagraphHeight(data)
+    : Number(data.height);
+}
+
+function buildElementHtml(data) {
+  const width = Number(data.width);
+  const height = getExportHeight(data);
+  const left = Number(data.x) - width / 2;
+  const top = Number(data.y) - height / 2;
+
+  const geometry =
+    `left:${left}px;top:${top}px;width:${width}px;`;
+
+  const attr = (css) => escapeHtml(css);
+
+  if (data.type === "header") {
+    const bg = safePaint(data.background, "#3366ff");
+    return `<header class="el" style="${attr(
+      `${geometry}height:${height}px;background:${bg};`
+    )}"></header>`;
+  }
+
+  if (data.type === "text") {
+    const p = getParagraphPadding(data);
+    const bg = safePaint(data.background, "transparent");
+    const color = safePaint(data.color, "#000000");
+
+    const outer =
+      `${geometry}min-height:${height}px;` +
+      `font-family:${safeFont(data.fontFamily)};` +
+      `font-size:${Number(data.fontSize) || 16}px;` +
+      `padding:${p.top}px ${p.right}px ${p.bottom}px ${p.left}px;` +
+      `background:${bg};`;
+
+    const inner = isGradientValue(color)
+      ? `color:transparent;background-image:${color};` +
+      `-webkit-background-clip:text;background-clip:text;` +
+      `-webkit-text-fill-color:transparent;`
+      : `color:${color};`;
+
+    // No whitespace between tags: the paragraph uses white-space: pre-wrap.
+    return `<p class="el" style="${attr(outer)}"><span style="${attr(inner)}">${escapeHtml(data.text)}</span></p>`;
+  }
+
+  if (data.type === "image") {
+    if (
+      typeof data.imageData !== "string" ||
+      !data.imageData.startsWith("data:image/")
+    ) {
+      return "";
+    }
+
+    const fit = ["contain", "cover", "fill"].includes(data.objectFit)
+      ? data.objectFit
+      : "contain";
+
+    return `<img class="el" src="${escapeHtml(data.imageData)}" alt="${escapeHtml(data.alt || "")}" style="${attr(
+      `${geometry}height:${height}px;object-fit:${fit};display:block;`
+    )}">`;
+  }
+
+  if (data.type === "button") {
+    const bg = safePaint(data.background, "#3366ff");
+    const color = safePaint(data.color, "#ffffff");
+
+    return `<button type="button" class="el" style="${attr(
+      `${geometry}height:${height}px;background:${bg};color:${color};` +
+      `border:0;font:inherit;cursor:pointer;`
+    )}">${escapeHtml(data.text || "")}</button>`;
+  }
+
+  return "";
+}
+
+function buildPageHtml(title) {
+  const pageWidth = Math.round(canvas.clientWidth);
+
+  const pageHeight = Math.ceil(
+    project.elements.reduce((max, data) => {
+      return Math.max(max, Number(data.y) + getExportHeight(data) / 2);
+    }, 0)
+  );
+
+  // Reuse the canvas's solid background color if it has one.
+  const canvasBg = getComputedStyle(canvas).backgroundColor;
+  const pageBg =
+    canvasBg &&
+    canvasBg !== "transparent" &&
+    canvasBg !== "rgba(0, 0, 0, 0)"
+      ? canvasBg
+      : "#ffffff";
+
+  const body = project.elements
+    .map(buildElementHtml)
+    .filter(Boolean)
+    .join("\n    ");
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${escapeHtml(title)}</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; background: ${pageBg}; }
+    .page {
+      position: relative;
+      width: ${pageWidth}px;
+      height: ${pageHeight}px;
+      margin: 0 auto;
+      overflow-x: hidden;
+    }
+    .el { position: absolute; margin: 0; }
+    p.el { line-height: 1.5; white-space: pre-wrap; overflow-wrap: break-word; }
+  </style>
+</head>
+<body>
+  <main class="page">
+    ${body}
+  </main>
+</body>
+</html>
+`;
+}
+
+function exportHtml() {
+  if (project.elements.length === 0) {
+    alert("Nothing to export yet. Place some elements first.");
+    return;
+  }
+
+  const title = prompt("Page title:", "My Website");
+  if (title === null) return; // cancelled
+
+  const html = buildPageHtml(title.trim() || "My Website");
+  const blob = new Blob([html], { type: "text/html" });
+
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = "index.html";
+
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+exportHtmlButton.addEventListener("click", exportHtml);
 
 // Initialize the ghost
 loadSavedVersions();
