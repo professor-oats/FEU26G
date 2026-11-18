@@ -43,7 +43,7 @@ const importInput = document.getElementById("import-project-input");
 const exportHtmlButton = document.getElementById("export-html");
 
 const WEBSON_FORMAT = "webson";
-const WEBSON_VERSION = 1;
+const WEBSON_VERSION = 2;
 
 // EVENT LISTENERS
 backgroundType.addEventListener("change", updateBackgroundControls);
@@ -76,7 +76,7 @@ imageUpload.addEventListener("change", (event) => {
 
       imageAspectRatio = img.naturalWidth / img.naturalHeight;
 
-      const width = 640;
+      const width = 320;
       const height = Math.round(width / imageAspectRatio);
 
       imageWidth.value = width;
@@ -152,26 +152,6 @@ colorPicker.addEventListener("input", () => {
   }
 });
 
-/*
-colorPicker.addEventListener("input", () => {
-  const target = getColorTarget();
-
-  if (editorMode.value === "edit" && selectedElementId) {
-    if (target === "color") {
-      updateSelectedElementProperty("color", colorPicker.value);
-    } else {
-      updateBackground();
-    }
-
-    return;
-  }
-
-  if (editorMode.value === "place") {
-    updateBackground();
-    updateGhost();
-  }
-});
- */
 
 editorMode.addEventListener("change", () => {
   if (editorMode.value === "paragraph") {
@@ -301,7 +281,7 @@ const restoreButton = document.getElementById("restore-project");
 
 
 /* Map elementsById and data index related functions */
-/* Separate functions for store operations parallell to project array data as source of truth */
+/* Separate functions for store operations parallel to project array data as source of truth */
 
 const elementsById = new Map();
 const domById = new Map();
@@ -1230,7 +1210,7 @@ clearBackgroundButton.addEventListener("click", () => {
   updateSelectedElementProperty("background", "transparent");
 });
 
-
+// If we'd like to later use a function to get the color adjusted to the backgroundType
 function getSelectedPaintValue() {
   if (backgroundType.value === "solid") {
     return colorPicker.value;
@@ -1375,28 +1355,6 @@ elementType.addEventListener("change", () => {
   updateGhost();
 });
 
-/*
-elementType.addEventListener("change", () => {
-  activeType = elementType.value;
-
-  activeConfig = {
-    ...elementConfigs[activeType]
-  };
-
-  updateGhost();
-});
-
- */
-
-/*
-elementType.addEventListener("change", () => {
-  activeType = elementType.value;
-  activeConfig = elementConfigs[activeType];
-
-  updateGhost();
-
-});
- */
 
 // Helper for paragraph handler
 // Measure paragraph text width without displaying the measuring element.
@@ -1575,8 +1533,6 @@ function updateSelectedElementProperty(property, value) {
 
 }
 
-
-
 function updateSelectedParagraphProperty(property, value) {
   if (editorMode.value !== "edit" || !selectedElementId) {
     return;
@@ -1613,7 +1569,6 @@ function updateSelectedParagraphProperty(property, value) {
   // A new edit clears the redo history.
   redoStack.length = 0;
 }
-
 
 
 // Start of ParagraphHandler
@@ -2021,21 +1976,6 @@ canvas.addEventListener("mousemove", (event) => {
   if (ghostBlock.style.display !== "block") ghostBlock.style.display = "block";
 });
 
-/*
-canvas.addEventListener("mousemove", (event) => {
-  // Never show the ghost outside Place mode
-  if (editorMode.value !== "place" || activeDrag) {
-    ghostBlock.style.display = "none";
-    return;
-  }
-
-  ghostBlock.style.left = event.clientX + "px";
-  ghostBlock.style.top = event.clientY + "px";
-  ghostBlock.style.display = "block";
-});
-
- */
-
 canvas.addEventListener("mouseleave", () => {
   ghostBlock.style.display = "none";
 });
@@ -2119,65 +2059,6 @@ canvas.addEventListener("click", (event) => {
   updateCanvasHeight();
 });
 
-
-/*
-canvas.addEventListener("click", (event) => {
-  // Ignore clicks inside the temporary paragraph editor.
-  if (event.target.closest(".paragraph-draft")) return;
-
-  // Paragraph mode opens the text editor.
-  if (editorMode.value === "paragraph") {
-    beginParagraphDraft(event);
-    return;
-  }
-
-  if (editorMode.value === "edit") {
-    // Clicking a resize handle should not clear the selection.
-    if (event.target.closest("#selection-overlay")) return;
-
-    const element = event.target.closest(".element");
-
-    if (element && canvas.contains(element)) {
-      selectElement(element);
-    } else {
-      selectedElementId = null;
-      updateSelectionOverlay();
-    }
-
-    return;
-  }
-
-  // Only Place mode can create regular elements.
-  if (editorMode.value !== "place") return;
-
-  const rect = canvas.getBoundingClientRect();
-
-  const elementData = {
-    id: crypto.randomUUID(),
-    type: activeType,
-    x: event.clientX - rect.left,
-    y: event.clientY - rect.top,
-    width: activeConfig.width,
-    height: activeConfig.height,
-    background: activeConfig.background,
-    color: activeConfig.color
-  };
-
-  project.elements.push(elementData);
-
-  undoStack.push({
-    type: "place",
-    element: { ...elementData }
-  });
-
-  limitHistory(undoStack);
-  redoStack.length = 0;
-
-  renderElement(elementData);
-  updateCanvasHeight();
-});
-
- */
 
 // Start of our moveHandler
 let activeDrag = null;
@@ -2878,30 +2759,6 @@ function restoreProjectVersion() {
     project: version.project
   }));
 
-  /*
-  // Restore a separate copy of the saved project
-  project.background = { ...version.project.background };
-  project.elements = version.project.elements.map((element) => ({
-    ...element
-  }));
-
-  // Restore the background controls
-  backgroundType.value = project.background.type;
-  colorPicker.value = project.background.color;
-  gradientStart.value = project.background.gradientStart;
-  gradientEnd.value = project.background.gradientEnd;
-  gradientDirection.value = project.background.gradientDirection;
-
-  // Reset history because we're switching to another project state
-  undoStack.length = 0;
-  redoStack.length = 0;
-
-  // Refresh the background and canvas
-  updateBackgroundControls();
-  updateGhost();
-  renderProject();
-
-   */
 }
 
 saveButton.addEventListener("click", saveProjectVersion);
