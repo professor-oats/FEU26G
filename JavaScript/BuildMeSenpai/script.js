@@ -84,7 +84,8 @@ imageUpload.addEventListener("change", (event) => {
 
       activeConfig.width = width;
       activeConfig.height = height;
-      activeConfig.background = `url("${uploadedImage}")`;
+      // activeConfig.background = `url("${uploadedImage}")`;
+      activeConfig.background = "transparent";
       activeConfig.className = "ghost-block image-preview";
 
       updateGhost();
@@ -613,8 +614,6 @@ function updateRenderedTextElement(data) {
 
 let selectedElementId = null;
 let activeResize = null;
-let selectedElement = null;  // unused for now
-let selectedElementData = null;
 let smartGuidesEnabled = true;
 
 selectionOverlay.id = "selection-overlay";
@@ -804,29 +803,6 @@ function updateAlignmentGuides(movingData, xMatch, yMatch) {
       end
     );
   }
-}
-
-function selectElement(element) {
-  selectedElementId = element.dataset.id;
-
-  const data = getElementData(selectedElementId);
-
-  if (!data) return;
-
-  selectedElementData = data;
-  activeType = data.type;
-  //activeConfig = elementConfigs[activeType];
-  activeConfig = { ...elementConfigs[activeType] };
-
-  if (data.type === "text") {
-    fontFamily.value = data.fontFamily || "Arial";
-    paragraphFontSize.value = String(data.fontSize || 16);
-    syncPaddingControls(data);
-  }
-
-  syncPaintControlsTo(data, data.type);
-  updateToolbarForSelection();
-  updateSelectionOverlay();
 }
 
 function getSelectedData() {
@@ -1058,17 +1034,16 @@ function applySelectedPadding(p) {
 
   // Refresh the visible paragraph.
   updateRenderedTextElement(data);
-
-  selectedElementData = data;
-
   syncPaddingControls(data);
   updateToolbarForSelection();
 }
 
 function handlePaddingXChange() {
-  const x = Number(paddingX.value);
+  const data = getSelectedData();
+  if (!data || data.type !== "text") return;
 
-  const p = getParagraphPadding(selectedElementData);
+  const x = Number(paddingX.value);
+  const p = getParagraphPadding(data);
   p.left = x;
   p.right = x;
 
@@ -1076,9 +1051,11 @@ function handlePaddingXChange() {
 }
 
 function handlePaddingYChange() {
-  const y = Number(paddingY.value);
+  const data = getSelectedData();
+  if (!data || data.type !== "text") return;
 
-  const p = getParagraphPadding(selectedElementData);
+  const y = Number(paddingY.value);
+  const p = getParagraphPadding(data);
   p.top = y;
   p.bottom = y;
 
@@ -1094,10 +1071,9 @@ function handleApplyPaddingCss() {
     return;
   }
 
-  if (
-    !selectedElementData ||
-    selectedElementData.type !== "text"
-  ) {
+  const data = getSelectedData();
+
+  if (!data || data.type !== "text") {
     paddingCssError.textContent = "Select a text paragraph first.";
     return;
   }
@@ -1105,30 +1081,51 @@ function handleApplyPaddingCss() {
   applySelectedPadding(parsed);
 }
 
+// Null-safe toggle for toolbar panels.
+function setHidden(el, hidden) {
+  if (el) el.hidden = hidden;
+}
 
 function updateToolbarForSelection() {
+  const data = getSelectedData();
   const isEditMode = editorMode.value === "edit";
-  const hasSelection = Boolean(selectedElementData && activeConfig);
+  const hasSelection = Boolean(data && activeConfig);
 
-  // Hide the padding panel unless a text element is selected in Edit mode.
-  paddingControls.hidden = !(
-    isEditMode &&
-    hasSelection &&
-    selectedElementData.type === "text"
+  setHidden(
+    paddingControls,
+    !(isEditMode && hasSelection && data.type === "text")
   );
 
-  // Keep the existing property controls selection-aware.
-  if (!hasSelection) {
-    return;
-  }
+  if (!hasSelection) return;
 
   const editable = activeConfig.editableProperties;
 
-  backgroundControls.hidden = !editable.includes("background");
-  colorControls.hidden = !editable.includes("color");
-  fontFamilyControls.hidden = !editable.includes("fontFamily");
-  fontSizeControls.hidden = !editable.includes("fontSize");
-  textControls.hidden = !editable.includes("text");
+  setHidden(backgroundControls, !editable.includes("background"));
+  setHidden(colorControls, !editable.includes("color"));
+  setHidden(fontFamilyControls, !editable.includes("fontFamily"));
+  setHidden(fontSizeControls, !editable.includes("fontSize"));
+  setHidden(textControls, !editable.includes("text"));
+}
+
+function selectElement(element) {
+  const data = getElementData(element.dataset.id);
+  if (!data) return;
+
+  selectedElementId = data.id;
+  activeType = data.type;
+  activeConfig = { ...elementConfigs[activeType] };
+
+  // Show the outline first, so a toolbar problem can't block selection.
+  updateSelectionOverlay();
+
+  if (data.type === "text") {
+    fontFamily.value = data.fontFamily || "Arial";
+    paragraphFontSize.value = String(data.fontSize || 16);
+    syncPaddingControls(data);
+  }
+
+  syncPaintControlsTo(data, data.type);
+  updateToolbarForSelection();
 }
 
 /* Check what type of color change that will be wanted - background || color for example */
@@ -1568,7 +1565,6 @@ function updateSelectedElementProperty(property, value) {
   limitHistory(undoStack);
   redoStack.length = 0;
 
-  selectedElementData = data;
 }
 
 
@@ -2057,21 +2053,8 @@ canvas.addEventListener("click", (event) => {
     return;
   }
 
-  if (editorMode.value === "edit") {
-    // Clicking a resize handle should not clear the selection.
-    if (event.target.closest("#selection-overlay")) return;
-
-    const element = event.target.closest(".element");
-
-    if (element && canvas.contains(element)) {
-      selectElement(element);
-    } else {
-      selectedElementId = null;
-      updateSelectionOverlay();
-    }
-
-    return;
-  }
+  // Edit mode selects on mousedown; nothing to do on click.
+  if (editorMode.value === "edit") return;
 
   // Only Place mode can create regular elements.
   if (editorMode.value !== "place") return;
@@ -2191,14 +2174,12 @@ canvas.addEventListener("click", (event) => {
 let activeDrag = null;
 
 canvas.addEventListener("mousedown", (event) => {
-  // Edit mode: resize using a corner handle.
   if (editorMode.value === "edit") {
-    // 1. KEEP your existing resize-handle code here.
+    // 1. Resize via a corner handle.
     const handle = event.target.closest(".resize-handle");
 
     if (handle && selectedElementId) {
       const data = getElementData(selectedElementId);
-
       if (!data) return;
 
       event.preventDefault();
@@ -2209,6 +2190,7 @@ canvas.addEventListener("mousedown", (event) => {
         corner: handle.dataset.corner,
         startMouseX: event.clientX,
         startMouseY: event.clientY,
+        started: false,
         before: {
           x: data.x,
           y: data.y,
@@ -2220,17 +2202,24 @@ canvas.addEventListener("mousedown", (event) => {
       return;
     }
 
-    // 2. NEW: Start moving an element in Edit mode.
+    // Presses on the dashed outline itself do nothing.
+    if (event.target.closest("#selection-overlay")) return;
+
+    // 2. Select the element UNDER THE CURSOR and start a drag.
     const element = event.target.closest(".element");
-    if (!element) return;
 
-    const data = getElementData(selectedElementId);
+    if (!element) {
+      // Empty canvas: deselect.
+      selectedElementId = null;
+      updateSelectionOverlay();
+      updateToolbarForSelection();
+      return;
+    }
 
+    const data = getElementData(element.dataset.id);
     if (!data) return;
 
-    /* Update selected element and selectionoverlay properly */
-    selectedElementId = data.id;
-    updateSelectionOverlay();
+    selectElement(element); // toolbar, paint sync and overlay
 
     event.preventDefault();
 
@@ -2240,21 +2229,19 @@ canvas.addEventListener("mousedown", (event) => {
       startMouseX: event.clientX,
       startMouseY: event.clientY,
       startX: data.x,
-      startY: data.y
+      startY: data.y,
+      started: false
     };
 
     return;
   }
 
-
   if (editorMode.value !== "move") return;
 
   const element = event.target.closest(".element");
-
   if (!element || !canvas.contains(element)) return;
 
   const data = getElementData(element.dataset.id);
-
   if (!data) return;
 
   event.preventDefault();
@@ -2265,7 +2252,8 @@ canvas.addEventListener("mousedown", (event) => {
     startMouseX: event.clientX,
     startMouseY: event.clientY,
     startX: data.x,
-    startY: data.y
+    startY: data.y,
+    started: false
   };
 });
 
@@ -2280,6 +2268,12 @@ function handleDocumentMouseMove(event) {
 
     const dx = event.clientX - resize.startMouseX;
     const dy = event.clientY - resize.startMouseY;
+
+    // Ignore tiny movements so a click on a handle never resizes or snaps.
+    if (!resize.started) {
+      if (Math.hypot(dx, dy) < 3) return;
+      resize.started = true;
+    }
 
     const { x, y, width, height } = resize.before;
 
@@ -2389,6 +2383,11 @@ function handleDocumentMouseMove(event) {
   const dx = event.clientX - drag.startMouseX;
   const dy = event.clientY - drag.startMouseY;
 
+  if (!drag.started) {
+    if (Math.hypot(dx, dy) < 3) return;
+    drag.started = true;
+  }
+
   drag.data.x = drag.startX + dx;
   drag.data.y = drag.startY + dy;
 
@@ -2428,6 +2427,9 @@ let pendingMouseEvent = null;
 let mouseFrame = 0;
 
 document.addEventListener("mousemove", (event) => {
+  // Nothing to throttle unless a drag or resize is active.
+  if (!activeDrag && !activeResize) return;
+
   pendingMouseEvent = event;
   if (mouseFrame) return;
 
@@ -2439,18 +2441,17 @@ document.addEventListener("mousemove", (event) => {
   });
 });
 
-document.addEventListener("mouseup", () => {
-
+document.addEventListener("mouseup", (event) => {
   if (mouseFrame) {
     cancelAnimationFrame(mouseFrame);
     mouseFrame = 0;
   }
-  if (pendingMouseEvent) {
-    handleDocumentMouseMove(pendingMouseEvent);
-    pendingMouseEvent = null;
-  }
-  snapCache = null;
+  pendingMouseEvent = null;
 
+  // Apply the final position, but only for a real drag or resize.
+  if (activeDrag || activeResize) handleDocumentMouseMove(event);
+
+  snapCache = null;
   hideAlignmentGuides();
 
   // Finish resizing.
@@ -2460,13 +2461,10 @@ document.addEventListener("mouseup", () => {
 
     const data = getElementData(resize.id);
 
-    // Refresh the outline using the final dimensions.
     updateSelectionOverlay();
-
     if (!data) return;
 
     const before = resize.before;
-
     const after = {
       x: data.x,
       y: data.y,
@@ -2477,16 +2475,9 @@ document.addEventListener("mouseup", () => {
     const changed = Object.keys(before).some(
       (key) => before[key] !== after[key]
     );
-
     if (!changed) return;
 
-    undoStack.push({
-      type: "resize",
-      id: resize.id,
-      before,
-      after
-    });
-
+    undoStack.push({ type: "resize", id: resize.id, before, after });
     limitHistory(undoStack);
     redoStack.length = 0;
 
@@ -2575,15 +2566,6 @@ function refreshAfterHistoryAction(action) {
 /* Logic for pushing elements to front and back in the project array
    Affects display hierarchy
  */
-
-// Move an element to a specific position in the stacking order.
-function moveElementToIndex(id, toIndex) {
-  const from = project.elements.findIndex((item) => item.id === id);
-  if (from === -1) return;
-
-  const [item] = project.elements.splice(from, 1);
-  project.elements.splice(toIndex, 0, item);
-}
 
 // direction: +1 = forward (toward the top), -1 = backward.
 function reorderSelectedElement(direction) {
@@ -2987,7 +2969,6 @@ function applyProjectState(state) {
 
   // Drop anything tied to the old project.
   selectedElementId = null;
-  selectedElementData = null;
   activeResize = null;
   activeDrag = null;
 
