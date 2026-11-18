@@ -298,32 +298,91 @@ const saveButton = document.getElementById("save-project");
 const savedVersions = document.getElementById("saved-versions");
 const restoreButton = document.getElementById("restore-project");
 
+
+/* Map elementsById and data index related functions */
+/* Separate functions for store operations parallell to project array data as source of truth */
+
+const elementsById = new Map();
+const domById = new Map();
+
+function getElementData(id) {
+  return elementsById.get(id) ?? null;
+}
+
+function rebuildIndex() {
+  elementsById.clear();
+  for (const data of project.elements) elementsById.set(data.id, data);
+}
+
+function storeInsert(data, index = project.elements.length) {
+  project.elements.splice(index, 0, data);
+  elementsById.set(data.id, data);
+}
+
+// Returns the index the element had, or -1.
+function storeRemove(id) {
+  const index = project.elements.findIndex((e) => e.id === id);
+  if (index === -1) return -1;
+  project.elements.splice(index, 1);
+  elementsById.delete(id);
+  return index;
+}
+
+function storeMove(id, toIndex) {
+  const from = project.elements.findIndex((e) => e.id === id);
+  if (from === -1) return;
+  const [item] = project.elements.splice(from, 1);
+  project.elements.splice(toIndex, 0, item);
+}
+
+function storeReplaceAll(list) {
+  project.elements = list;
+  rebuildIndex();
+}
+
 // GENERAL HELPER FUNCTIONS HERE FOR NOW
 // Helper function to get dynamic for Paragraph Height
+const paragraphMeasurer = document.createElement("div");
+
+Object.assign(paragraphMeasurer.style, {
+  position: "absolute",
+  visibility: "hidden",
+  left: "-100000px",
+  top: "0",
+  boxSizing: "border-box",
+  lineHeight: "1.5",
+  overflowWrap: "break-word",
+  whiteSpace: "pre-wrap"
+});
+
+document.body.appendChild(paragraphMeasurer);
+
+const paragraphHeightCache = new Map();
+
 function measureParagraphHeight(data) {
-  const measure = document.createElement("div");
-
-  measure.style.position = "absolute";
-  measure.style.visibility = "hidden";
-  measure.style.left = "-100000px";
-  measure.style.top = "0";
-  measure.style.width = `${data.width}px`;
-  measure.style.boxSizing = "border-box";
-  measure.style.fontFamily = data.fontFamily || "Arial";
-  measure.style.fontSize = `${data.fontSize || 16}px`;
-  measure.style.lineHeight = "1.5";
-  measure.style.overflowWrap = "break-word";
-  measure.style.whiteSpace = "pre-wrap";
-
   const p = getParagraphPadding(data);
-  measure.style.padding =
-    `${p.top}px ${p.right}px ${p.bottom}px ${p.left}px`;
+  const fontFamilyValue = data.fontFamily || "Arial";
+  const fontSizeValue = data.fontSize || 16;
 
-  measure.textContent = data.text || "";
-  document.body.appendChild(measure);
+  const key = JSON.stringify([
+    data.width, fontFamilyValue, fontSizeValue,
+    p.top, p.right, p.bottom, p.left, data.text || ""
+  ]);
 
-  const height = measure.scrollHeight;
-  measure.remove();
+  const cached = paragraphHeightCache.get(key);
+  if (cached !== undefined) return cached;
+
+  const style = paragraphMeasurer.style;
+  style.width = `${data.width}px`;
+  style.fontFamily = fontFamilyValue;
+  style.fontSize = `${fontSizeValue}px`;
+  style.padding = `${p.top}px ${p.right}px ${p.bottom}px ${p.left}px`;
+  paragraphMeasurer.textContent = data.text || "";
+
+  const height = paragraphMeasurer.scrollHeight;
+
+  if (paragraphHeightCache.size > 500) paragraphHeightCache.clear();
+  paragraphHeightCache.set(key, height);
 
   return height;
 }
@@ -378,7 +437,7 @@ function setActiveElementType(type) {
   updateGhost();
 }
 
-function renderElement(data) {
+function renderElement(data, parent = canvas) {
   const config = elementConfigs[data.type];
   const element = document.createElement("div");
 
@@ -434,20 +493,24 @@ function renderElement(data) {
     element.appendChild(img);
   }
 
-  canvas.appendChild(element);
+  // Keep the data's height in sync with what was actually rendered.
+  if (data.type === "text") data.height = parseFloat(element.style.height);
+
+  domById.set(data.id, element);
+  parent.appendChild(element);
+
 }
 
 // Targeted render of element
 function updateRenderedElement(data, changedProperties = null) {
-  const element = Array.from(
-    canvas.querySelectorAll(".element")
-  ).find((item) => item.dataset.id === data.id);
+  const element = domById.get(data.id);
 
   // Recovery path if the element is missing from the canvas.
   if (!element) {
-    renderProject();
+    reconcileCanvas();
     return;
   }
+
 
   const updateAll = changedProperties === null;
 
@@ -617,84 +680,71 @@ function getElementBounds(data) {
 }
 
 // Find the closest edge or center alignment on one axis.
-function findBestAlignment(movingData, axis) {
-  const moving = getElementBounds(movingData);
-  const movingValues = axis === "x"
-    ? [moving.left, moving.centerX, moving.right]
-    : [moving.top, moving.centerY, moving.bottom];
+let snapCache = null;
 
+function getSnapTargets(movingId) {
+  if (snapCache?.id === movingId) return snapCache.targets;
+
+  const targets = [];
+
+  for (const data of project.elements) {
+    if (data.id === movingId) continue;
+
+    const b = getElementBounds(data);
+    targets.push({
+      data,
+      x: [b.left, b.centerX, b.right],
+      y: [b.top, b.centerY, b.bottom]
+    });
+  }
+
+  snapCache = { id: movingId, targets };
+  return targets;
+}
+
+function findClosest(movingValues, axis, movingId) {
   const threshold = 6;
-  let bestMatch = null;
+  let best = null;
 
-  for (const targetData of project.elements) {
-    if (targetData.id === movingData.id) continue;
-
-    const target = getElementBounds(targetData);
-    const targetValues = axis === "x"
-      ? [target.left, target.centerX, target.right]
-      : [target.top, target.centerY, target.bottom];
-
+  for (const target of getSnapTargets(movingId)) {
     for (const movingValue of movingValues) {
-      for (const targetValue of targetValues) {
+      for (const targetValue of target[axis]) {
         const delta = targetValue - movingValue;
         const distance = Math.abs(delta);
 
-        if (
-          distance <= threshold &&
-          (!bestMatch || distance < bestMatch.distance)
-        ) {
-          bestMatch = {
+        if (distance <= threshold && (!best || distance < best.distance)) {
+          best = {
             delta,
             distance,
             position: targetValue,
-            targetData
+            targetData: target.data
           };
         }
       }
     }
   }
 
-  return bestMatch;
+  return best;
 }
 
+function findBestAlignment(movingData, axis) {
+  const m = getElementBounds(movingData);
+
+  return findClosest(
+    axis === "x"
+      ? [m.left, m.centerX, m.right]
+      : [m.top, m.centerY, m.bottom],
+    axis,
+    movingData.id
+  );
+}
 
 function findBestResizeAlignment(movingData, axis, edge) {
-  const moving = getElementBounds(movingData);
-
-  // Only the edge being dragged can trigger a resize snap.
-  const movingValue = moving[edge];
-
-  const threshold = 6;
-  let bestMatch = null;
-
-  for (const targetData of project.elements) {
-    if (targetData.id === movingData.id) continue;
-
-    const target = getElementBounds(targetData);
-
-    const targetValues = axis === "x"
-      ? [target.left, target.centerX, target.right]
-      : [target.top, target.centerY, target.bottom];
-
-    for (const targetValue of targetValues) {
-      const delta = targetValue - movingValue;
-      const distance = Math.abs(delta);
-
-      if (
-        distance <= threshold &&
-        (!bestMatch || distance < bestMatch.distance)
-      ) {
-        bestMatch = {
-          delta,
-          distance,
-          position: targetValue,
-          targetData
-        };
-      }
-    }
-  }
-
-  return bestMatch;
+  return findClosest(
+    [getElementBounds(movingData)[edge]],
+    axis,
+    movingData.id
+  );
 }
 
 
@@ -759,9 +809,7 @@ function updateAlignmentGuides(movingData, xMatch, yMatch) {
 function selectElement(element) {
   selectedElementId = element.dataset.id;
 
-  const data = project.elements.find(
-    (item) => item.id === selectedElementId
-  );
+  const data = getElementData(selectedElementId);
 
   if (!data) return;
 
@@ -781,15 +829,17 @@ function selectElement(element) {
   updateSelectionOverlay();
 }
 
+function getSelectedData() {
+  return selectedElementId ? getElementData(selectedElementId) : null;
+}
+
 function updateSelectionOverlay() {
   if (editorMode.value !== "edit" || !selectedElementId) {
     selectionOverlay.hidden = true;
     return;
   }
 
-  const data = project.elements.find(
-    (item) => item.id === selectedElementId
-  );
+  const data = getElementData(selectedElementId);
 
   if (!data) {
     selectionOverlay.hidden = true;
@@ -804,11 +854,42 @@ function updateSelectionOverlay() {
 }
 
 function renderProject() {
-  canvas.querySelectorAll(".element").forEach((element) => {
-    element.remove();
-  });
+  domById.forEach((node) => node.remove());
+  domById.clear();
 
-  project.elements.forEach(renderElement);
+  // Arrow function: forEach would pass the index as the second argument.
+  const fragment = document.createDocumentFragment();
+  project.elements.forEach((data) => renderElement(data, fragment));
+  canvas.appendChild(fragment);
+
+  updateCanvasHeight();
+  updateSelectionOverlay();
+}
+
+function reconcileCanvas() {
+  // 1. Create nodes for new data.
+  for (const data of project.elements) {
+    if (!domById.has(data.id)) renderElement(data);
+  }
+
+  // 2. Remove nodes whose data is gone (deleting during iteration is safe).
+  for (const [id, node] of domById) {
+    if (!elementsById.has(id)) {
+      node.remove();
+      domById.delete(id);
+    }
+  }
+
+  // 3. Fix stacking order with the fewest DOM moves: walk backwards and
+  //    only move a node if it isn't already right before its successor.
+  let next = null;
+  for (let i = project.elements.length - 1; i >= 0; i--) {
+    const node = domById.get(project.elements[i].id);
+    if (next && node.nextElementSibling !== next) {
+      canvas.insertBefore(node, next);
+    }
+    next = node;
+  }
 
   updateCanvasHeight();
   updateSelectionOverlay();
@@ -930,9 +1011,7 @@ function applySelectedPadding(p) {
     return;
   }
 
-  const data = project.elements.find(
-    (item) => item.id === selectedElementId
-  );
+  const data = getElementData(selectedElementId);
 
   if (!data || data.type !== "text") return;
 
@@ -1122,9 +1201,7 @@ document.querySelectorAll('input[name="colorTarget"]')
       }
 
       // Existing selected-element behavior.
-      const data = project.elements.find(
-        (item) => item.id === selectedElementId
-      );
+      const data = getElementData(selectedElementId);
 
       if (!data) return;
 
@@ -1172,7 +1249,7 @@ function updateBackground() {
   // Only treat a selection as the target while actually in Edit mode.
   const selectedData =
     editorMode.value === "edit" && selectedElementId
-      ? project.elements.find((item) => item.id === selectedElementId)
+      ? getElementData(selectedElementId)
       : null;
 
   if (selectedData) {
@@ -1248,12 +1325,23 @@ function updateGhost() {
 }
 
 // Recalculate the required canvas height
-function updateCanvasHeight() {
-  const lowestPoint = project.elements.reduce((max, element) => {
-    return Math.max(max, element.y + element.height);
-  }, window.innerHeight);
+let canvasHeightQueued = false;
 
-  canvas.style.height = lowestPoint + "px";
+function updateCanvasHeight() {
+  if (canvasHeightQueued) return;
+  canvasHeightQueued = true;
+
+  requestAnimationFrame(() => {
+    canvasHeightQueued = false;
+
+    let lowest = window.innerHeight;
+    for (const data of project.elements) {
+      // y is the element's center, so the bottom edge is y + height / 2.
+      lowest = Math.max(lowest, data.y + data.height / 2);
+    }
+
+    canvas.style.height = `${lowest}px`;
+  });
 }
 
 // Update the active element type
@@ -1431,9 +1519,7 @@ function updateSelectedElementProperty(property, value) {
     return;
   }
 
-  const data = project.elements.find(
-    (item) => item.id === selectedElementId
-  );
+  const data = getElementData(selectedElementId);
 
   if (!data) return;
 
@@ -1492,9 +1578,7 @@ function updateSelectedParagraphProperty(property, value) {
     return;
   }
 
-  const data = project.elements.find(
-    (item) => item.id === selectedElementId
-  );
+  const data = getElementData(selectedElementId)
 
   if (!data || data.type !== "text") {
     return;
@@ -1880,7 +1964,7 @@ function beginParagraphDraft(event) {
     draft.remove();
     activeParagraphDraft = null;
 
-    project.elements.push(elementData);
+    storeInsert(elementData);
 
     undoStack.push({
       type: "place",
@@ -1893,6 +1977,18 @@ function beginParagraphDraft(event) {
     renderElement(elementData);
     updateCanvasHeight();
   });
+}
+
+function syncTypographyControls() {
+  const data = getSelectedData();
+
+  if (data?.type === "text") {
+    fontFamily.value = data.fontFamily || "Arial";
+    paragraphFontSize.value = String(data.fontSize || 16);
+    syncPaddingControls(data);
+  }
+
+  updateToolbarForSelection();
 }
 
 
@@ -1908,6 +2004,20 @@ paragraphFontSize.addEventListener("input", () => {
 /* Rest of program logic here and listeners */
 
 // Move the ghost with the cursor
+
+canvas.addEventListener("mousemove", (event) => {
+  if (editorMode.value !== "place" || activeDrag) {
+    if (ghostBlock.style.display !== "none") ghostBlock.style.display = "none";
+    return;
+  }
+
+  ghostBlock.style.left = event.clientX + "px";
+  ghostBlock.style.top = event.clientY + "px";
+
+  if (ghostBlock.style.display !== "block") ghostBlock.style.display = "block";
+});
+
+/*
 canvas.addEventListener("mousemove", (event) => {
   // Never show the ghost outside Place mode
   if (editorMode.value !== "place" || activeDrag) {
@@ -1919,6 +2029,8 @@ canvas.addEventListener("mousemove", (event) => {
   ghostBlock.style.top = event.clientY + "px";
   ghostBlock.style.display = "block";
 });
+
+ */
 
 canvas.addEventListener("mouseleave", () => {
   ghostBlock.style.display = "none";
@@ -1995,7 +2107,7 @@ canvas.addEventListener("click", (event) => {
   }
 
   // Store element in project.
-  project.elements.push(elementData);
+  storeInsert(elementData);
 
   // Add placement to undo history.
   undoStack.push({
@@ -2085,9 +2197,7 @@ canvas.addEventListener("mousedown", (event) => {
     const handle = event.target.closest(".resize-handle");
 
     if (handle && selectedElementId) {
-      const data = project.elements.find(
-        (item) => item.id === selectedElementId
-      );
+      const data = getElementData(selectedElementId);
 
       if (!data) return;
 
@@ -2114,9 +2224,7 @@ canvas.addEventListener("mousedown", (event) => {
     const element = event.target.closest(".element");
     if (!element) return;
 
-    const data = project.elements.find(
-      (item) => item.id === element.dataset.id
-    );
+    const data = getElementData(selectedElementId);
 
     if (!data) return;
 
@@ -2145,9 +2253,7 @@ canvas.addEventListener("mousedown", (event) => {
 
   if (!element || !canvas.contains(element)) return;
 
-  const data = project.elements.find(
-    (item) => item.id === element.dataset.id
-  );
+  const data = getElementData(element.dataset.id);
 
   if (!data) return;
 
@@ -2163,14 +2269,12 @@ canvas.addEventListener("mousedown", (event) => {
   };
 });
 
-document.addEventListener("mousemove", (event) => {
+function handleDocumentMouseMove(event) {
   // EDIT MODE: Resize the selected element.
   if (activeResize) {
     const resize = activeResize;
 
-    const data = project.elements.find(
-      (item) => item.id === resize.id
-    );
+    const data = getElementData(resize.id);
 
     if (!data) return;
 
@@ -2259,9 +2363,8 @@ document.addEventListener("mousemove", (event) => {
 
 
     // Update the visible element immediately.
-    const element = canvas.querySelector(
-      `.element[data-id="${resize.id}"]`
-    );
+    const element = domById.get(resize.id);
+
 
     if (element) {
       element.style.left = `${data.x}px`;
@@ -2319,9 +2422,34 @@ document.addEventListener("mousemove", (event) => {
   drag.element.style.left = `${drag.data.x}px`;
   drag.element.style.top = `${drag.data.y}px`;
   updateSelectionOverlay();
+}
+
+let pendingMouseEvent = null;
+let mouseFrame = 0;
+
+document.addEventListener("mousemove", (event) => {
+  pendingMouseEvent = event;
+  if (mouseFrame) return;
+
+  mouseFrame = requestAnimationFrame(() => {
+    mouseFrame = 0;
+    const e = pendingMouseEvent;
+    pendingMouseEvent = null;
+    if (e) handleDocumentMouseMove(e);
+  });
 });
 
 document.addEventListener("mouseup", () => {
+
+  if (mouseFrame) {
+    cancelAnimationFrame(mouseFrame);
+    mouseFrame = 0;
+  }
+  if (pendingMouseEvent) {
+    handleDocumentMouseMove(pendingMouseEvent);
+    pendingMouseEvent = null;
+  }
+  snapCache = null;
 
   hideAlignmentGuides();
 
@@ -2330,9 +2458,7 @@ document.addEventListener("mouseup", () => {
     const resize = activeResize;
     activeResize = null;
 
-    const data = project.elements.find(
-      (item) => item.id === resize.id
-    );
+    const data = getElementData(resize.id);
 
     // Refresh the outline using the final dimensions.
     updateSelectionOverlay();
@@ -2393,83 +2519,57 @@ document.addEventListener("mouseup", () => {
 });
 
 function deleteSelectedElement() {
-  // Deletion is only allowed in Edit mode.
-  if (editorMode.value !== "edit" || !selectedElementId) {
-    return;
-  }
+  if (editorMode.value !== "edit" || !selectedElementId) return;
 
-  const index = project.elements.findIndex(
-    (element) => element.id === selectedElementId
-  );
+  const data = getElementData(selectedElementId);
+  if (!data) return;
 
-  if (index === -1) return;
+  const index = storeRemove(data.id);
 
-  // Save the element and its original position in the array.
-  const element = { ...project.elements[index] };
-
-  project.elements.splice(index, 1);
-
-  undoStack.push({
-    type: "delete",
-    element,
-    index
-  });
-
+  undoStack.push({ type: "delete", element: { ...data }, index });
   limitHistory(undoStack);
   redoStack.length = 0;
 
-  // Clear the selection because that element no longer exists.
   selectedElementId = null;
-
-  // Rebuild the canvas and hide the selection outline.
-  renderProject();
+  reconcileCanvas();
 }
 
 // Helper function for undo history
 
 function refreshAfterHistoryAction(action) {
-
   if (
     action.type === "place" ||
     action.type === "delete" ||
     action.type === "reorder"
   ) {
-    renderProject();
+    reconcileCanvas();
     return;
   }
 
-  const element = project.elements.find(
-    (item) => item.id === action.id
-  );
+  const element = getElementData(action.id);
 
   if (!element) {
-    renderProject();
+    reconcileCanvas();
     return;
   }
 
   if (action.type === "property") {
     updateRenderedElement(element, [action.property]);
   }
-
   else if (action.type === "move") {
     updateRenderedElement(element, ["position"]);
   }
-
   else if (action.type === "resize") {
     updateRenderedElement(element, ["position", "size"]);
   }
-
   else if (action.type === "padding") {
-    updateRenderedTextElement(element);
+    updateRenderedElement(element, ["padding"]);
 
     if (selectedElementId === element.id) {
-      selectedElementData = element;
-
       syncPaddingControls(element);
       updateToolbarForSelection();
     }
   }
-
 }
 
 /* Logic for pushing elements to front and back in the project array
@@ -2502,7 +2602,7 @@ function reorderSelectedElement(direction) {
   // Already at the front or back.
   if (newIndex === index) return;
 
-  moveElementToIndex(selectedElementId, newIndex);
+  storeMove(selectedElementId, newIndex);
 
   undoStack.push({
     type: "reorder",
@@ -2514,185 +2614,106 @@ function reorderSelectedElement(direction) {
   limitHistory(undoStack);
   redoStack.length = 0;
 
-  renderProject();
+  reconcileCanvas();
 }
 
 
-function undoAction() {
-  const action = undoStack.pop();
+// Remove an element from the store, clearing selection if it was selected.
+function removeElementById(id) {
+  storeRemove(id);
+  if (selectedElementId === id) selectedElementId = null;
+}
 
-  if (!action) return;
+// Re-insert a stored copy at a given position and select it.
+function restoreElement(snapshot, index) {
+  storeInsert(
+    { ...snapshot },
+    Math.min(index ?? project.elements.length, project.elements.length)
+  );
 
-  if (action.type === "place") {
-    project.elements = project.elements.filter(
-      (element) => element.id !== action.element.id
-    );
+  selectedElementId = snapshot.id;
+
+  const restored = getElementData(snapshot.id);
+
+  if (restored) {
+    activeType = restored.type;
+    activeConfig = { ...elementConfigs[activeType] };
   }
+}
 
-  else if (action.type === "delete") {
-    // Restore the deleted element at its original position.
-    project.elements.splice(
-      Math.min(action.index, project.elements.length),
-      0,
-      { ...action.element }
-    );
+// direction: "undo" applies the "before" state, "redo" the "after" state.
+function applyHistoryAction(action, direction) {
+  const isUndo = direction === "undo";
+  const state = isUndo ? action.before : action.after;
 
-    // Restore its selection.
-    selectedElementId = action.element.id;
+  switch (action.type) {
+    case "place":
+      if (isUndo) removeElementById(action.element.id);
+      else restoreElement(action.element);
+      break;
 
-    const restoredElement = project.elements.find(
-      (element) => element.id === selectedElementId
-    );
+    case "delete":
+      if (isUndo) restoreElement(action.element, action.index);
+      else removeElementById(action.element.id);
+      break;
 
-    if (restoredElement) {
-      activeType = restoredElement.type;
-      //activeConfig = elementConfigs[activeType];
-      activeConfig = { ...elementConfigs[activeType] };
+    case "reorder":
+      // before/after are array indices.
+      storeMove(action.id, state);
+      break;
+
+    case "move":     // { x, y }
+    case "resize":   // { x, y, width, height }
+    case "padding": { // padding fields
+      const element = getElementData(action.id);
+      if (element) Object.assign(element, state);
+      break;
     }
-  }
 
-  else if (action.type === "move") {
-    const element = project.elements.find(
-      (item) => item.id === action.id
-    );
+    case "property": {
+      const element = getElementData(action.id);
+      if (!element) break;
 
-    if (element) {
-      element.x = action.before.x;
-      element.y = action.before.y;
-    }
-  }
+      element[action.property] = state;
 
-  else if (action.type === "resize") {
-    const element = project.elements.find(
-      (item) => item.id === action.id
-    );
+      // Restore the header's default color when applicable.
+      const configValue = isUndo
+        ? action.configBefore
+        : action.configAfter;
 
-    if (element) {
-      Object.assign(element, action.before);
-    }
-  }
-
-  else if (action.type === "padding") {
-    const element = project.elements.find(
-      (item) => item.id === action.id
-    );
-
-    if (element) {
-      Object.assign(element, action.before);
-    }
-  }
-
-  else if (action.type === "reorder") {
-    moveElementToIndex(action.id, action.before);
-  }
-
-
-  else if (action.type === "property") {
-    const element = project.elements.find(
-      (item) => item.id === action.id
-    );
-
-    if (element) {
-      element[action.property] = action.before;
-
-      // Restore the associated configuration when applicable.
-      if (action.configBefore !== undefined) {
-        elementConfigs[element.type].background =
-          action.configBefore;
-
+      if (configValue !== undefined) {
+        elementConfigs[element.type].background = configValue;
         updateGhost();
       }
+      break;
     }
   }
+}
 
+function undoAction() {
+  const action = undoStack.pop();
+  if (!action) return;
+
+  applyHistoryAction(action, "undo");
 
   redoStack.push(action);
   limitHistory(redoStack);
+
   refreshAfterHistoryAction(action);
   syncTypographyControls();
-
 }
 
 function redoAction() {
   const action = redoStack.pop();
-
   if (!action) return;
 
-  if (action.type === "place") {
-    project.elements.push({ ...action.element });
-  }
-
-  else if (action.type === "delete") {
-    project.elements = project.elements.filter(
-      (element) => element.id !== action.element.id
-    );
-
-    if (selectedElementId === action.element.id) {
-      selectedElementId = null;
-    }
-  }
-
-  else if (action.type === "move") {
-    const element = project.elements.find(
-      (item) => item.id === action.id
-    );
-
-    if (element) {
-      element.x = action.after.x;
-      element.y = action.after.y;
-    }
-  }
-
-  else if (action.type === "resize") {
-    const element = project.elements.find(
-      (item) => item.id === action.id
-    );
-
-    if (element) {
-      Object.assign(element, action.after);
-    }
-  }
-
-
-  else if (action.type === "padding") {
-    const element = project.elements.find(
-      (item) => item.id === action.id
-    );
-
-    if (element) {
-      Object.assign(element, action.after);
-    }
-  }
-
-  else if (action.type === "reorder") {
-    moveElementToIndex(action.id, action.after);
-  }
-
-  else if (action.type === "property") {
-    const element = project.elements.find(
-      (item) => item.id === action.id
-    );
-
-    if (element) {
-      element[action.property] = action.after;
-
-      // Restore the associated configuration when applicable.
-      if (action.configAfter !== undefined) {
-        elementConfigs[element.type].background =
-          action.configAfter;
-
-        updateGhost();
-      }
-    }
-  }
-
-
+  applyHistoryAction(action, "redo");
 
   undoStack.push(action);
   limitHistory(undoStack);
+
   refreshAfterHistoryAction(action);
   syncTypographyControls();
-
 }
 
 document.addEventListener("keydown", (event) => {
@@ -2962,7 +2983,7 @@ function validateWebson(data) {
 
 function applyProjectState(state) {
   project.background = { ...state.background };
-  project.elements = state.elements.map((element) => ({ ...element }));
+  storeReplaceAll(state.elements.map((e) => ({ ...e })));
 
   // Drop anything tied to the old project.
   selectedElementId = null;
