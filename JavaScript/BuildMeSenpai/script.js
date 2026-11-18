@@ -495,7 +495,7 @@ function renderElement(data, parent = canvas) {
 
     img.style.width = "100%";
     img.style.height = "100%";
-    img.style.objectFit = data.objectFit || "contain";
+    img.style.objectFit = data.objectFit || "fill";
     img.style.display = "block";
 
     element.appendChild(img);
@@ -2094,7 +2094,7 @@ canvas.addEventListener("click", (event) => {
 
     elementData.imageData = uploadedImage;
     elementData.aspectRatio = imageAspectRatio || elementData.width / elementData.height;
-    elementData.objectFit = "contain";
+    elementData.objectFit = "fill";
     elementData.alt = "Uploaded image";
   }
 
@@ -3148,7 +3148,7 @@ function buildElementHtml(data) {
 
     const fit = ["contain", "cover", "fill"].includes(data.objectFit)
       ? data.objectFit
-      : "contain";
+      : "fill";
 
     return `<img class="el" src="${escapeHtml(data.imageData)}" alt="${escapeHtml(data.alt || "")}" style="${attr(
       `${geometry}height:${height}px;object-fit:${fit};display:block;`
