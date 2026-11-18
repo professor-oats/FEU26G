@@ -37,6 +37,13 @@ const imageWidth = document.getElementById("image-width");
 const imageHeight = document.getElementById("image-height");
 const lockImageAspect = document.getElementById("lock-image-aspect");
 
+const exportButton = document.getElementById("export-project");
+const importButton = document.getElementById("import-project");
+const importInput = document.getElementById("import-project-input");
+
+const WEBSON_FORMAT = "webson";
+const WEBSON_VERSION = 1;
+
 // EVENT LISTENERS
 backgroundType.addEventListener("change", updateBackgroundControls);
 gradientStart.addEventListener("input", updateBackground);
@@ -2737,6 +2744,13 @@ function restoreProjectVersion() {
     return;
   }
 
+  applyProjectState(validateWebson({
+    format: WEBSON_FORMAT,
+    version: WEBSON_VERSION,
+    project: version.project
+  }));
+
+  /*
   // Restore a separate copy of the saved project
   project.background = { ...version.project.background };
   project.elements = version.project.elements.map((element) => ({
@@ -2758,10 +2772,174 @@ function restoreProjectVersion() {
   updateBackgroundControls();
   updateGhost();
   renderProject();
+
+   */
 }
 
 saveButton.addEventListener("click", saveProjectVersion);
 restoreButton.addEventListener("click", restoreProjectVersion);
+
+function exportProject() {
+  const payload = {
+    format: WEBSON_FORMAT,
+    version: WEBSON_VERSION,
+    savedAt: new Date().toISOString(),
+    project: structuredClone(project)
+  };
+
+  const blob = new Blob(
+    [JSON.stringify(payload, null, 2)],
+    { type: "application/json" }
+  );
+
+  const stamp = new Date()
+    .toISOString()
+    .slice(0, 19)
+    .replace(/[:T]/g, "-");
+
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = `website-project-${stamp}.webson`;
+
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+function validateWebson(data) {
+  if (!data || data.format !== WEBSON_FORMAT) {
+    throw new Error("This is not a .webson project file.");
+  }
+
+  if (typeof data.version !== "number" || data.version > WEBSON_VERSION) {
+    throw new Error("This file was made with a newer version of the tool.");
+  }
+
+  const source = data.project;
+
+  if (!source || !Array.isArray(source.elements)) {
+    throw new Error("The project data is missing or damaged.");
+  }
+
+  const isNumber = (value) =>
+    typeof value === "number" && Number.isFinite(value);
+
+  const ids = new Set();
+
+  const elements = source.elements.map((element, index) => {
+    const label = `Element ${index + 1}`;
+
+    if (!element || typeof element !== "object") {
+      throw new Error(`${label} is invalid.`);
+    }
+
+    if (!Object.keys(elementConfigs).includes(element.type)) {
+      throw new Error(`${label} has an unknown type.`);
+    }
+
+    if (
+      typeof element.id !== "string" ||
+      !/^[\w-]+$/.test(element.id) ||
+      ids.has(element.id)
+    ) {
+      throw new Error(`${label} has a missing or duplicate id.`);
+    }
+
+    ids.add(element.id);
+
+    for (const key of ["x", "y", "width", "height"]) {
+      if (!isNumber(element[key])) {
+        throw new Error(`${label} has an invalid ${key}.`);
+      }
+    }
+
+    if (
+      element.type === "image" &&
+      !(
+        typeof element.imageData === "string" &&
+        element.imageData.startsWith("data:image/")
+      )
+    ) {
+      throw new Error(`${label} has invalid image data.`);
+    }
+
+    return { ...element };
+  });
+
+  // Only accept known background keys, falling back to current values.
+  const background = { ...project.background };
+
+  for (const key of Object.keys(background)) {
+    if (typeof source.background?.[key] === "string") {
+      background[key] = source.background[key];
+    }
+  }
+
+  return { background, elements };
+}
+
+function applyProjectState(state) {
+  project.background = { ...state.background };
+  project.elements = state.elements.map((element) => ({ ...element }));
+
+  // Drop anything tied to the old project.
+  selectedElementId = null;
+  selectedElementData = null;
+  activeResize = null;
+  activeDrag = null;
+
+  // Restore the background controls.
+  backgroundType.value = project.background.type;
+  colorPicker.value = project.background.color;
+  gradientStart.value = project.background.gradientStart;
+  gradientEnd.value = project.background.gradientEnd;
+  gradientDirection.value = project.background.gradientDirection;
+
+  // History belongs to the previous project.
+  undoStack.length = 0;
+  redoStack.length = 0;
+
+  updateBackgroundControls();
+  updateGhost();
+  renderProject();
+}
+
+importButton.addEventListener("click", () => importInput.click());
+
+importInput.addEventListener("change", async () => {
+  const file = importInput.files[0];
+
+  // Reset so choosing the same file again still fires "change".
+  importInput.value = "";
+
+  if (!file) return;
+
+  if (!file.name.toLowerCase().endsWith(".webson")) {
+    alert("Please choose a .webson file.");
+    return;
+  }
+
+  try {
+    const state = validateWebson(JSON.parse(await file.text()));
+
+    if (
+      project.elements.length > 0 &&
+      !confirm("Loading replaces your current project. Continue?")
+    ) {
+      return;
+    }
+
+    applyProjectState(state);
+  } catch (error) {
+    alert(`Could not load project: ${error.message}`);
+  }
+});
+
+exportButton.addEventListener("click", exportProject);
 
 // Initialize the ghost
 loadSavedVersions();
