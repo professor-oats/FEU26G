@@ -251,7 +251,7 @@ const elementConfigs = {
     height: 50,
     background: "#3366ff",
     color: "#ffffff",
-    editableProperties: ["background", "color", "text"]
+    editableProperties: ["background", "color", "text", "fontFamily", "fontSize", "padding"]
   }
 };
 
@@ -341,6 +341,10 @@ document.body.appendChild(paragraphMeasurer);
 const paragraphHeightCache = new Map();
 
 function measureParagraphHeight(data) {
+  return measureTextElementHeight(data);
+}
+
+function measureTextElementHeight(data) {
   const p = getParagraphPadding(data);
   const fontFamilyValue = data.fontFamily || "Arial";
   const fontSizeValue = data.fontSize || 16;
@@ -429,10 +433,20 @@ function renderElement(data, parent = canvas) {
   element.style.top = data.y + "px";
   element.style.width = data.width + "px";
 
+  /*
   element.style.height =
     data.type === "text"
       ? `${measureParagraphHeight(data)}px`
       : `${data.height}px`;
+
+   */
+
+  if (data.type === "text" || data.type === "button") {
+    element.style.height = `${measureParagraphHeight(data)}px`;
+  }
+  else {
+    element.style.height = `${data.height}px`;
+  }
 
   element.style.background = data.background || "transparent";
   element.style.transform = "translate(-50%, -50%)";
@@ -481,7 +495,12 @@ function renderElement(data, parent = canvas) {
     element.appendChild(img);
   }
 
-  if (data.type === "button") applyButtonLook(element, data);
+  if (data.type === "button") {
+    applyButtonLook(element, data);
+
+    // Project padding overrides preset padding.
+    applyElementPadding(element, data);
+  }
 
   // Keep the data's height in sync with what was actually rendered.
   if (data.type === "text") data.height = parseFloat(element.style.height);
@@ -508,9 +527,12 @@ function updateRenderedElement(data, changedProperties = null) {
     updateAll || changedProperties.includes(property);
 
   const isText = data.type === "text";
+  const isButton = data.type === "button";
+
+  const hasTextContent = isText || isButton;
 
   const affectsTextLayout =
-    isText &&
+    hasTextContent &&
     (
       changed("size") ||
       changed("width") ||
@@ -531,10 +553,10 @@ function updateRenderedElement(data, changedProperties = null) {
     element.style.width = `${data.width}px`;
   }
 
-  if (isText && affectsTextLayout) {
+  if (hasTextContent && affectsTextLayout) {
     data.height = measureParagraphHeight(data);
     element.style.height = `${data.height}px`;
-  } else if (!isText && (changed("size") || changed("height"))) {
+  } else if (!hasTextContent && (changed("size") || changed("height"))) {
     element.style.height = `${data.height}px`;
   }
 
@@ -544,7 +566,7 @@ function updateRenderedElement(data, changedProperties = null) {
   }
 
   // Text-specific appearance.
-  if (isText) {
+  if (hasTextContent) {
     if (changed("fontFamily")) {
       element.style.fontFamily = data.fontFamily || "Arial";
     }
@@ -554,12 +576,8 @@ function updateRenderedElement(data, changedProperties = null) {
     }
 
     if (changed("padding")) {
-      const p = getParagraphPadding(data);
-
-      element.style.padding =
-        `${p.top}px ${p.right}px ${p.bottom}px ${p.left}px`;
+      applyElementPadding(element, data);
     }
-
     // Make sure the text span exists.
     let textContent = element.querySelector(".text-content");
 
@@ -582,7 +600,12 @@ function updateRenderedElement(data, changedProperties = null) {
     }
   }
 
-  if (data.type === "button") applyButtonLook(element, data);
+  if (data.type === "button") {
+    applyButtonLook(element, data);
+
+    // Project padding overrides preset padding.
+    applyElementPadding(element, data);
+  }
 
   // Only refresh canvas geometry when dimensions may have changed.
   if (
@@ -894,7 +917,7 @@ function updateEditorMode() {
 
 // Helper functions for padding updates in toolbar
 
-function getParagraphPadding(data) {
+function getElementPadding(data) {
   return {
     top: data.paddingTop ?? data.paddingY ?? 8,
     right: data.paddingRight ?? data.paddingX ?? 10,
@@ -974,6 +997,17 @@ function syncPaddingControls(data) {
 
 // Helper functions to apply padding via toolbar controls
 
+function getParagraphPadding(data) {
+  return getElementPadding(data);
+}
+
+function applyElementPadding(element, data) {
+  const p = getElementPadding(data);
+
+  element.style.padding =
+    `${p.top}px ${p.right}px ${p.bottom}px ${p.left}px`;
+}
+
 function applySelectedPadding(p) {
   // Padding changes are only allowed in Edit mode.
   if (editorMode.value !== "edit" || !selectedElementId) {
@@ -982,7 +1016,70 @@ function applySelectedPadding(p) {
 
   const data = getElementData(selectedElementId);
 
-  if (!data || data.type !== "text") return;
+  // Allow padding changes for text and buttons.
+  if (!data || !["text", "button"].includes(data.type)) {
+    return;
+  }
+
+  // Capture original padding values.
+  const before = {
+    paddingTop: data.paddingTop,
+    paddingRight: data.paddingRight,
+    paddingBottom: data.paddingBottom,
+    paddingLeft: data.paddingLeft,
+    paddingX: data.paddingX,
+    paddingY: data.paddingY
+  };
+
+  // Prepare new padding values.
+  const after = {
+    paddingTop: p.top,
+    paddingRight: p.right,
+    paddingBottom: p.bottom,
+    paddingLeft: p.left,
+    paddingX: (p.left + p.right) / 2,
+    paddingY: (p.top + p.bottom) / 2
+  };
+
+  // Avoid recording unchanged values.
+  const changed = Object.keys(after).some(
+    key => before[key] !== after[key]
+  );
+
+  if (!changed) return;
+
+  // Update project data.
+  Object.assign(data, after);
+
+  // Record the complete padding change.
+  undoStack.push({
+    type: "padding",
+    id: data.id,
+    before,
+    after
+  });
+
+  limitHistory(undoStack);
+  redoStack.length = 0;
+
+  // Update the actual rendered element.
+  updateRenderedElement(data, ["padding"]);
+
+  syncPaddingControls(data);
+  updateToolbarForSelection();
+}
+
+/*
+function applySelectedPadding(p) {
+  // Padding changes are only allowed in Edit mode.
+  if (editorMode.value !== "edit" || !selectedElementId) {
+    return;
+  }
+
+  const data = getElementData(selectedElementId);
+
+  // Allow list for padding changes here
+  if (!data || (data.type !== "text" && data.type !== "button")) return;
 
   // Capture the original padding values.
   const before = {
@@ -1030,10 +1127,11 @@ function applySelectedPadding(p) {
   syncPaddingControls(data);
   updateToolbarForSelection();
 }
+ */
 
 function handlePaddingXChange() {
   const data = getSelectedData();
-  if (!data || data.type !== "text") return;
+  if (!data || (data.type !== "text" && data.type !== "button")) return;
 
   const x = Number(paddingX.value);
   const p = getParagraphPadding(data);
@@ -1045,7 +1143,7 @@ function handlePaddingXChange() {
 
 function handlePaddingYChange() {
   const data = getSelectedData();
-  if (!data || data.type !== "text") return;
+  if (!data || (data.type !== "text" && data.type !== "button")) return;
 
   const y = Number(paddingY.value);
   const p = getParagraphPadding(data);
@@ -1066,10 +1164,8 @@ function handleApplyPaddingCss() {
 
   const data = getSelectedData();
 
-  if (!data || data.type !== "text") {
-    paddingCssError.textContent = "Select a text paragraph first.";
-    return;
-  }
+  // Allowlist
+  if (!data || (data.type !== "text" && data.type !== "button")) return;
 
   applySelectedPadding(parsed);
 }
@@ -1086,7 +1182,7 @@ function updateToolbarForSelection() {
 
   setHidden(
     paddingControls,
-    !(isEditMode && hasSelection && data.type === "text")
+    !(isEditMode && hasSelection && (data.type === "text" || data.type === "button"))
   );
 
   if (!hasSelection) return;
@@ -1111,7 +1207,15 @@ function selectElement(element) {
   // Show the outline first, so a toolbar problem can't block selection.
   updateSelectionOverlay();
 
+  // This part should be replaced with syncTypographyControls()
+
   if (data.type === "text") {
+    fontFamily.value = data.fontFamily || "Arial";
+    paragraphFontSize.value = String(data.fontSize || 16);
+    syncPaddingControls(data);
+  }
+
+  else if (data.type === "button") {
     fontFamily.value = data.fontFamily || "Arial";
     paragraphFontSize.value = String(data.fontSize || 16);
     syncPaddingControls(data);
@@ -1952,6 +2056,12 @@ function syncTypographyControls() {
     syncPaddingControls(data);
   }
 
+  else if (data?.type === "button") {
+    fontFamily.value = data.fontFamily || "Arial";
+    paragraphFontSize.value = String(data.fontSize || 16);
+    syncPaddingControls(data);
+  }
+
   updateToolbarForSelection();
 }
 
@@ -2469,6 +2579,17 @@ function applyButtonLook(element, data) {
     label.className = "text-content";
     element.appendChild(label);
   }
+
+  // Allow button text to wrap -- New addition
+
+  label.style.display = "block";
+  label.style.width = "100%";
+  label.style.minWidth = "0";
+  label.style.whiteSpace = "normal";
+  label.style.overflowWrap = "break-word";
+  label.style.wordBreak = "normal";
+  label.style.textAlign = "center";
+  label.style.lineHeight = "1.2";
 
   label.textContent = data.text || "Button";
   applyParagraphTextColor(element, data); // solid or gradient text
@@ -3500,8 +3621,8 @@ function sanitizeButton(element) {
 }
 
 function getExportHeight(data) {
-  return data.type === "text"
-    ? measureParagraphHeight(data)
+  return ["text", "button"].includes(data.type)
+    ? measureTextElementHeight(data)
     : Number(data.height);
 }
 

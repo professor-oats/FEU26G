@@ -388,11 +388,13 @@ body {
 }
 
 .button-draft textarea, .button-draft input[type="text"] {
-  width: 100%; box-sizing: border-box;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .button-draft textarea {
-  min-height: 0; resize: vertical;
+  min-height: 0;
+  resize: vertical;
 }
 
 .button-preset-row {
