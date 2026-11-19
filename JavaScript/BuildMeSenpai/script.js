@@ -1108,6 +1108,18 @@ function updateToolbarForSelection() {
     !(isEditMode && hasSelection && (data.type === "text" || data.type === "button"))
   );
 
+  // Place mode: show the panels for the type about to be placed.
+  if (editorMode.value === "place" && activeConfig?.editableProperties) {
+    const editable = activeConfig.editableProperties;
+
+    setHidden(backgroundControls, !editable.includes("background"));
+    setHidden(colorControls, activeType === "image");
+    setHidden(fontFamilyControls, !editable.includes("fontFamily"));
+    setHidden(fontSizeControls, !editable.includes("fontSize"));
+    setHidden(textControls, !editable.includes("text"));
+    return;
+  }
+
   if (!hasSelection) return;
 
   const editable = activeConfig.editableProperties;
@@ -1118,6 +1130,29 @@ function updateToolbarForSelection() {
   setHidden(fontSizeControls, !editable.includes("fontSize"));
   setHidden(textControls, !editable.includes("text"));
 }
+
+/*
+function updateToolbarForSelection() {
+  const data = getSelectedData();
+  const isEditMode = editorMode.value === "edit";
+  const hasSelection = Boolean(data && activeConfig);
+
+  setHidden(
+    paddingControls,
+    !(isEditMode && hasSelection && (data.type === "text" || data.type === "button"))
+  );
+
+  if (!hasSelection) return;
+
+  const editable = activeConfig.editableProperties;
+
+  setHidden(backgroundControls, !editable.includes("background"));
+  setHidden(colorControls, !editable.includes("color"));
+  setHidden(fontFamilyControls, !editable.includes("fontFamily"));
+  setHidden(fontSizeControls, !editable.includes("fontSize"));
+  setHidden(textControls, !editable.includes("text"));
+}
+*/
 
 function selectElement(element) {
   const data = getElementData(element.dataset.id);
@@ -1319,7 +1354,14 @@ function ghostDisplayValue() {
   return activeType === "button" ? "flex" : "block";
 }
 
+let pointerOverCanvas = false;
+
 function updateGhost() {
+  renderGhost();
+  if (!pointerOverCanvas) ghostBlock.style.display = "none";
+}
+
+function renderGhost() {
   if (
     editorMode.value !== "place" ||
     activeParagraphDraft ||
@@ -1423,6 +1465,45 @@ function updateCanvasHeight() {
 // Update the active element type
 
 elementType.addEventListener("change", () => {
+  const type = elementType.value;
+  const isImage = type === "image";
+
+  // 1. Switch to Place mode FIRST. updateGhost() hides the ghost outside it.
+  cancelDrafts();
+  editorMode.value = "place";
+  selectedElementId = null; // otherwise the old outline returns later in Edit mode
+
+  // 2. Per-type setup (unchanged from before).
+  if (type === "text") {
+    paragraphDraftPaint = { color: "#000000", background: "transparent" };
+  }
+
+  setActiveElementType(type);
+
+  colorControls.hidden = isImage;
+  imageControls.hidden = !isImage;
+
+  if (isImage) {
+    activeConfig.width = 640;
+    activeConfig.height = imageAspectRatio
+      ? Math.round(640 / imageAspectRatio)
+      : 360;
+    activeConfig.background = "#d3d3d3";
+    activeConfig.className = "ghost-block image-placeholder";
+  } else {
+    syncPaintControlsTo(activeConfig, type);
+  }
+
+  // 3. Apply the mode: canvas classes, ghost, overlay, toolbar.
+  updateEditorMode();
+
+  // Keep arrow keys from changing the type by accident afterwards.
+  elementType.blur();
+});
+
+/*
+
+elementType.addEventListener("change", () => {
 
   cancelDrafts();
   // A fresh paragraph starts with black text and no background,
@@ -1455,6 +1536,8 @@ elementType.addEventListener("change", () => {
 
   updateGhost();
 });
+
+ */
 
 
 // Helper for paragraph handler
@@ -2559,6 +2642,8 @@ function applyButtonLook(element, data) {
 
 canvas.addEventListener("mousemove", (event) => {
 
+  pointerOverCanvas = true;
+
   if (
     editorMode.value !== "place" ||
     activeDrag ||
@@ -3159,6 +3244,25 @@ function restoreElement(snapshot, index) {
     Math.min(index ?? project.elements.length, project.elements.length)
   );
 
+  if (editorMode.value === "edit") {
+    selectedElementId = snapshot.id;
+
+    const restored = getElementData(snapshot.id);
+
+    if (restored) {
+      activeType = restored.type;
+      activeConfig = { ...elementConfigs[activeType] };
+    }
+  }
+}
+
+/*
+function restoreElement(snapshot, index) {
+  storeInsert(
+    { ...snapshot },
+    Math.min(index ?? project.elements.length, project.elements.length)
+  );
+
   selectedElementId = snapshot.id;
 
   const restored = getElementData(snapshot.id);
@@ -3168,6 +3272,7 @@ function restoreElement(snapshot, index) {
     activeConfig = { ...elementConfigs[activeType] };
   }
 }
+ */
 
 // direction: "undo" applies the "before" state, "redo" the "after" state.
 function applyHistoryAction(action, direction) {
