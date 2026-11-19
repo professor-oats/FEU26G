@@ -154,29 +154,7 @@ colorPicker.addEventListener("input", () => {
 
 
 editorMode.addEventListener("change", () => {
-  if (editorMode.value === "paragraph") {
-    paragraphDraftPaint = {
-      color: "#000000",
-      background: "transparent"
-    };
-
-    document.querySelector(
-      'input[name="colorTarget"][value="color"]'
-    ).checked = true;
-
-    colorPicker.value = paragraphDraftPaint.color;
-
-    applyParagraphTypography();
-  }
-  /*
-  else if (editorMode.value === "place" && activeType === "header") {
-    // Restore the header's saved color in the picker.
-    colorPicker.value = elementConfigs.header.background;
-  }
-
-   */
-
-  else if (editorMode.value === "place") {
+  if (editorMode.value === "place") {
     activeType = elementType.value;
 
     if (activeType !== "image") {
@@ -187,7 +165,6 @@ editorMode.addEventListener("change", () => {
 
   updateEditorMode();
   updateToolbarForSelection();
-
 });
 
 const toggleSmartGuidesButton = document.getElementById(
@@ -218,7 +195,7 @@ const elementConfigs = {
     width: 800,
     height: 120,
     background: "#3366ff",
-    editableProperties: ["background"]
+    editableProperties: ["background", "color"]
   },
 
   text: {
@@ -405,6 +382,12 @@ function applyParagraphTextColor(element, data) {
 }
 
 function setActiveElementType(type) {
+
+  if (!elementConfigs[type]) {
+    console.warn(`Unknown element type "${type}"`);
+    return;
+  }
+
   activeType = type;
 
   // Always create a fresh copy of the default configuration.
@@ -424,6 +407,12 @@ function setActiveElementType(type) {
 
 function renderElement(data, parent = canvas) {
   const config = elementConfigs[data.type];
+
+  if (!config) {
+    console.warn("Cannot render unknown type:", data.type);
+    return;
+  }
+
   const element = document.createElement("div");
 
   element.classList.add("element", ...config.className.split(/\s+/));
@@ -619,11 +608,6 @@ function updateRenderedElement(data, changedProperties = null) {
   } else if (changed("position")) {
     updateSelectionOverlay();
   }
-}
-
-// Keep the old function name temporarily so existing callers still work.
-function updateRenderedTextElement(data) {
-  updateRenderedElement(data, ["padding"]);
 }
 
 
@@ -898,11 +882,10 @@ function updateEditorMode() {
 
   canvas.classList.toggle("place-mode", mode === "place");
   canvas.classList.toggle("move-mode", mode === "move");
-  canvas.classList.toggle("paragraph-mode", mode === "paragraph");
   canvas.classList.toggle("edit-mode", mode === "edit");
-  canvas.classList.toggle("button-mode", mode === "button");
 
   if (mode !== "place") {
+    cancelDrafts();
     ghostBlock.style.display = "none";
   }
 
@@ -1068,66 +1051,6 @@ function applySelectedPadding(p) {
   syncPaddingControls(data);
   updateToolbarForSelection();
 }
-
-/*
-function applySelectedPadding(p) {
-  // Padding changes are only allowed in Edit mode.
-  if (editorMode.value !== "edit" || !selectedElementId) {
-    return;
-  }
-
-  const data = getElementData(selectedElementId);
-
-  // Allow list for padding changes here
-  if (!data || (data.type !== "text" && data.type !== "button")) return;
-
-  // Capture the original padding values.
-  const before = {
-    paddingTop: data.paddingTop,
-    paddingRight: data.paddingRight,
-    paddingBottom: data.paddingBottom,
-    paddingLeft: data.paddingLeft,
-    paddingX: data.paddingX,
-    paddingY: data.paddingY
-  };
-
-  // Prepare the new padding values.
-  const after = {
-    paddingTop: p.top,
-    paddingRight: p.right,
-    paddingBottom: p.bottom,
-    paddingLeft: p.left,
-    paddingX: (p.left + p.right) / 2,
-    paddingY: (p.top + p.bottom) / 2
-  };
-
-  // Avoid recording unchanged values.
-  const changed = Object.keys(after).some(
-    (key) => before[key] !== after[key]
-  );
-
-  if (!changed) return;
-
-  // Apply the new values.
-  Object.assign(data, after);
-
-  // Record the complete padding change.
-  undoStack.push({
-    type: "padding",
-    id: data.id,
-    before,
-    after
-  });
-
-  limitHistory(undoStack);
-  redoStack.length = 0;
-
-  // Refresh the visible paragraph.
-  updateRenderedTextElement(data);
-  syncPaddingControls(data);
-  updateToolbarForSelection();
-}
- */
 
 function handlePaddingXChange() {
   const data = getSelectedData();
@@ -1388,33 +1311,92 @@ function updateBackgroundControls() {
 }
 
 // Apply the active configuration to the ghost
+const GHOST_LOREM =
+  "Lorem ipsum dolor sit amet";
+
+// The ghost uses flex for buttons (to center the label), block otherwise.
+function ghostDisplayValue() {
+  return activeType === "button" ? "flex" : "block";
+}
+
 function updateGhost() {
-  if (editorMode.value !== "place") {
+  if (
+    editorMode.value !== "place" ||
+    activeParagraphDraft ||
+    activeButtonDraft ||
+    !activeConfig
+  ) {
     ghostBlock.style.display = "none";
     return;
   }
 
-  ghostBlock.style.display = "block";
-
-  ghostBlock.style.width = activeConfig.width + "px";
-  ghostBlock.style.height = activeConfig.height + "px";
+  // Clear whatever the previous type left behind, but keep the cursor position.
+  const { left, top } = ghostBlock.style;
+  ghostBlock.removeAttribute("style");
+  ghostBlock.style.left = left;
+  ghostBlock.style.top = top;
+  ghostBlock.replaceChildren();
 
   ghostBlock.className = activeConfig.className;
+  ghostBlock.style.display = ghostDisplayValue();
+  ghostBlock.style.width = `${activeConfig.width}px`;
+  ghostBlock.style.height = `${activeConfig.height}px`;
 
-  if (elementType.value === "image") {
+  const fontSize = Number(paragraphFontSize.value) || 16;
+
+  // IMAGE
+  if (activeType === "image") {
     if (uploadedImage) {
       ghostBlock.style.backgroundImage = `url("${uploadedImage}")`;
       ghostBlock.style.backgroundSize = "100% 100%";
       ghostBlock.style.backgroundRepeat = "no-repeat";
       ghostBlock.style.backgroundPosition = "center";
     } else {
-      ghostBlock.style.backgroundImage = "none";
       ghostBlock.style.backgroundColor = "#d3d3d3";
     }
-
     return;
   }
 
+  // PARAGRAPH: lorem ipsum in the last-used paint
+  if (activeType === "text") {
+    const s = ghostBlock.style;
+
+    s.height = "auto";
+    s.minHeight = "40px";
+    s.boxSizing = "border-box";
+    s.padding = "8px 10px";
+    s.whiteSpace = "pre-wrap";
+    s.overflowWrap = "break-word";
+    s.lineHeight = "1.5";
+    s.textAlign = "left";
+    s.fontFamily = fontFamily.value || "Arial";
+    s.fontSize = `${fontSize}px`;
+    s.background = paragraphDraftPaint.background || "transparent";
+    s.outline = "1px dashed rgba(0, 0, 0, 0.35)";
+
+    applyParagraphTextColor(ghostBlock, { color: paragraphDraftPaint.color });
+    ghostBlock.querySelector(".text-content").textContent = GHOST_LOREM;
+    return;
+  }
+
+  // BUTTON: the default (Solid) look
+  if (activeType === "button") {
+    const preset = BUTTON_PRESETS.solid;
+
+    applyButtonLook(ghostBlock, {
+      preset: "solid",
+      text: "Button",
+      color: preset.color,
+      background: preset.background,
+      fontFamily: fontFamily.value || "Arial",
+      fontSize
+    });
+
+    ghostBlock.style.opacity = "0.85";
+    return;
+  }
+
+  // HEADER
   ghostBlock.style.background = activeConfig.background;
 }
 
@@ -1441,6 +1423,15 @@ function updateCanvasHeight() {
 // Update the active element type
 
 elementType.addEventListener("change", () => {
+
+  cancelDrafts();
+  // A fresh paragraph starts with black text and no background,
+  // as the old Paragraph mode did.
+
+  if (elementType.value === "text") {
+    paragraphDraftPaint = { color: "#000000", background: "transparent" };
+  }
+
   const type = elementType.value;
   const isImage = type === "image";
 
@@ -1450,6 +1441,7 @@ elementType.addEventListener("change", () => {
   colorControls.hidden = isImage;
   imageControls.hidden = !isImage;
 
+  // TODO, check the aspect ratio here
   if (isImage) {
     activeConfig.width = 640;
     activeConfig.height = imageAspectRatio
@@ -1605,66 +1597,13 @@ function updateSelectedElementProperty(property, value) {
 
   if (before === value) return;
 
-  // Capture the related configuration before changing anything.
-  const configBefore =
-    data.type === "header" && property === "background"
-      ? elementConfigs.header.background
-      : undefined;
-
+  // Update project data.
   data[property] = value;
 
-  // Keep the default header appearance synchronized.
-  if (data.type === "header" && property === "background") {
-    elementConfigs.header.background = value;
-    updateGhost();
-  }
-
-  // Update only the affected DOM property.
+  // Render the changed property.
   updateRenderedElement(data, [property]);
 
-  // Record the complete history action.
-  undoStack.push({
-    type: "property",
-    id: data.id,
-    property,
-    before,
-    after: value,
-
-    configBefore,
-    configAfter:
-      data.type === "header" && property === "background"
-        ? value
-        : undefined
-  });
-
-  limitHistory(undoStack);
-  redoStack.length = 0;
-
-}
-
-function updateSelectedParagraphProperty(property, value) {
-  if (editorMode.value !== "edit" || !selectedElementId) {
-    return;
-  }
-
-  const data = getElementData(selectedElementId)
-
-  if (!data || data.type !== "text") {
-    return;
-  }
-
-  const before = data[property];
-
-  // Ignore changes that don't actually change the value.
-  if (before === value) return;
-
-  // Update the project data.
-  data[property] = value;
-
-  // Update only the affected properties in the existing DOM element.
-  updateRenderedElement(data, [property]);
-
-  // Record the change so it can be undone and redone.
+  // Record history.
   undoStack.push({
     type: "property",
     id: data.id,
@@ -1674,13 +1613,24 @@ function updateSelectedParagraphProperty(property, value) {
   });
 
   limitHistory(undoStack);
-
-  // A new edit clears the redo history.
   redoStack.length = 0;
+
+  updateToolbarForSelection();
 }
 
-
 // Start of ParagraphHandler
+
+function cancelDrafts() {
+  if (activeParagraphDraft) {
+    activeParagraphDraft.draft.remove();
+    activeParagraphDraft = null;
+  }
+
+  if (activeButtonDraft) {
+    activeButtonDraft.draft.remove();
+    activeButtonDraft = null;
+  }
+}
 
 let activeParagraphDraft = null;
 
@@ -2045,6 +1995,8 @@ function beginParagraphDraft(event) {
     renderElement(elementData);
     updateCanvasHeight();
   });
+
+  updateGhost();
 }
 
 function syncTypographyControls() {
@@ -2066,12 +2018,16 @@ function syncTypographyControls() {
 }
 
 paragraphFontSize.addEventListener("input", () => {
-  if (editorMode.value === "edit") {
-    updateSelectedParagraphProperty(
-      "fontSize",
-      Number(paragraphFontSize.value)
-    );
-  }
+  if (editorMode.value !== "edit") return;
+
+  const size = Number(paragraphFontSize.value);
+  if (size >= 1) updateSelectedElementProperty("fontSize", size);
+});
+
+fontFamily.addEventListener("change", () => {
+  if (editorMode.value !== "edit") return;
+
+  updateSelectedElementProperty("fontFamily", fontFamily.value);
 });
 
 // Start of button draft handler
@@ -2602,7 +2558,13 @@ function applyButtonLook(element, data) {
 // Move the ghost with the cursor
 
 canvas.addEventListener("mousemove", (event) => {
-  if (editorMode.value !== "place" || activeDrag) {
+
+  if (
+    editorMode.value !== "place" ||
+    activeDrag ||
+    activeParagraphDraft ||
+    activeButtonDraft
+  ) {
     if (ghostBlock.style.display !== "none") ghostBlock.style.display = "none";
     return;
   }
@@ -2610,7 +2572,10 @@ canvas.addEventListener("mousemove", (event) => {
   ghostBlock.style.left = event.clientX + "px";
   ghostBlock.style.top = event.clientY + "px";
 
-  if (ghostBlock.style.display !== "block") ghostBlock.style.display = "block";
+  // Only restore visibility. Never overwrite a display value that's already visible.
+  if (ghostBlock.style.display === "none") {
+    ghostBlock.style.display = ghostDisplayValue();
+  }
 });
 
 canvas.addEventListener("mouseleave", () => {
@@ -2632,22 +2597,27 @@ canvas.addEventListener("click", (event) => {
   // Ignore clicks inside the temporary paragraph editor.
   if (event.target.closest(".paragraph-draft")) return;
 
-  // Paragraph mode opens the text editor.
-  if (editorMode.value === "paragraph") {
+  // Edit mode selects on mousedown; nothing to do on click.
+  if (editorMode.value === "edit") return;
+
+  // Only Place mode can create elements.
+  if (editorMode.value !== "place") return;
+
+  if (!elementConfigs[activeType]) {
+    alert(`Unknown element type "${activeType}". Check the element-type options.`);
+    return;
+  }
+
+  // Paragraphs and buttons are built in their tool popups.
+  if (activeType === "text") {
     beginParagraphDraft(event);
     return;
   }
 
-  if (editorMode.value === "button") {
+  if (activeType === "button") {
     beginButtonDraft(event);
     return;
   }
-
-  // Edit mode selects on mousedown; nothing to do on click.
-  if (editorMode.value === "edit") return;
-
-  // Only Place mode can create regular elements.
-  if (editorMode.value !== "place") return;
 
   const rect = canvas.getBoundingClientRect();
 
@@ -3820,5 +3790,5 @@ editorMode.value = "place";
 elementType.value = "header";
 setActiveElementType("header");
 updateEditorMode();
-updateGhost();
+//updateGhost();
 renderProject();
