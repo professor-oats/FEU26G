@@ -59,6 +59,8 @@ body {
   cursor: none;
 }
 
+/* Cursor Definitions */
+
 #website-canvas.paragraph-mode {
   cursor: text;
 }
@@ -68,6 +70,10 @@ body {
 }
 
 #website-canvas.move-mode {
+  cursor: default;
+}
+
+#website-canvas.button-mode {
   cursor: default;
 }
 
@@ -81,6 +87,10 @@ body {
 
 #website-canvas.edit-mode .element {
   cursor: pointer;
+}
+
+#toolbar {
+  cursor: default;
 }
 
 #selection-overlay {
@@ -363,4 +373,58 @@ body {
   width: 100%;
   height: 100%;
   display: block;
+}
+
+/* Button making styling here */
+
+/*
+.button-mode {
+  cursor: default;
+}
+ */
+
+.button-draft {
+  min-width: 320px;
+}
+
+.button-draft textarea, .button-draft input[type="text"] {
+  width: 100%; box-sizing: border-box;
+}
+
+.button-draft textarea {
+  min-height: 0; resize: vertical;
+}
+
+.button-preset-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+.button-preset-option {
+  padding: 4px;
+  background: none;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.button-preset-option[aria-pressed="true"] {
+  border-color: #3366ff;
+}
+
+.button-preview-stage {
+  display: flex;
+  justify-content: center;
+  padding: 12px;
+  background: #f3f3f3;
+  border-radius: 8px;
+}
+
+.button-error {
+  color: #b00020; font-size: 12px;
+}
+
+.button-hint {
+  color: #666; font-size: 11px;
 }

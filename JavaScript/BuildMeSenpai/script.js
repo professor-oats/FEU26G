@@ -481,6 +481,8 @@ function renderElement(data, parent = canvas) {
     element.appendChild(img);
   }
 
+  if (data.type === "button") applyButtonLook(element, data);
+
   // Keep the data's height in sync with what was actually rendered.
   if (data.type === "text") data.height = parseFloat(element.style.height);
 
@@ -579,6 +581,8 @@ function updateRenderedElement(data, changedProperties = null) {
       textContent.textContent = data.text || "";
     }
   }
+
+  if (data.type === "button") applyButtonLook(element, data);
 
   // Only refresh canvas geometry when dimensions may have changed.
   if (
@@ -873,6 +877,7 @@ function updateEditorMode() {
   canvas.classList.toggle("move-mode", mode === "move");
   canvas.classList.toggle("paragraph-mode", mode === "paragraph");
   canvas.classList.toggle("edit-mode", mode === "edit");
+  canvas.classList.toggle("button-mode", mode === "button");
 
   if (mode !== "place") {
     ghostBlock.style.display = "none";
@@ -1950,7 +1955,6 @@ function syncTypographyControls() {
   updateToolbarForSelection();
 }
 
-
 paragraphFontSize.addEventListener("input", () => {
   if (editorMode.value === "edit") {
     updateSelectedParagraphProperty(
@@ -1959,6 +1963,518 @@ paragraphFontSize.addEventListener("input", () => {
     );
   }
 });
+
+// Start of button draft handler
+
+let activeButtonDraft = null;
+
+function labelled(text, control) {
+  const label = document.createElement("label");
+  label.textContent = text;
+  label.appendChild(control);
+  return label;
+}
+
+function makeSelect(options) {
+  const select = document.createElement("select");
+
+  options.forEach(([value, text]) => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = text;
+    select.appendChild(option);
+  });
+
+  return select;
+}
+
+// Solid / gradient (/ transparent) paint control. Emits a CSS value.
+function createPaintField(labelText, { allowTransparent = false, initial, onChange }) {
+  const group = document.createElement("div");
+  group.className = "paragraph-paint-controls";
+
+  const mode = makeSelect([
+    ["solid", "Solid"],
+    ["gradient", "Gradient"],
+    ...(allowTransparent ? [["transparent", "Transparent"]] : [])
+  ]);
+
+  const solid = Object.assign(document.createElement("input"), { type: "color", value: "#3366ff" });
+  const direction = makeSelect(GRADIENT_DIRECTIONS);
+  const start = Object.assign(document.createElement("input"), { type: "color", value: "#3366ff" });
+  const end = Object.assign(document.createElement("input"), { type: "color", value: "#ff66cc" });
+
+  const solidLabel = labelled("Color", solid);
+  const gradientGroup = document.createElement("div");
+  gradientGroup.className = "paragraph-gradient-controls";
+  gradientGroup.append(
+    labelled("Direction", direction),
+    labelled("Start", start),
+    labelled("End", end)
+  );
+
+  group.append(labelled(labelText, mode), solidLabel, gradientGroup);
+
+  function syncVisibility() {
+    solidLabel.hidden = mode.value !== "solid";
+    gradientGroup.hidden = mode.value !== "gradient";
+  }
+
+  function read() {
+    if (mode.value === "transparent") return "transparent";
+    if (mode.value === "solid") return solid.value;
+    return createGradientValue(direction.value, start.value, end.value);
+  }
+
+  // Updates the controls WITHOUT calling onChange.
+  function write(value) {
+    const gradient = typeof value === "string" ? value.match(GRADIENT_RE) : null;
+
+    if (gradient) {
+      mode.value = "gradient";
+      direction.value = gradient[1].trim();
+      start.value = gradient[2];
+      end.value = gradient[3];
+    } else if (value === "transparent" && allowTransparent) {
+      mode.value = "transparent";
+    } else {
+      mode.value = "solid";
+      if (/^#[0-9a-fA-F]{6}$/.test(value || "")) solid.value = value;
+    }
+
+    syncVisibility();
+  }
+
+  [mode, solid, direction, start, end].forEach((control) => {
+    const emit = () => { syncVisibility(); onChange(read()); };
+    control.addEventListener("input", emit);
+    control.addEventListener("change", emit);
+  });
+
+  write(initial);
+
+  return { element: group, read, write };
+}
+
+const measureCtx = document.createElement("canvas").getContext("2d");
+
+function measureLabelWidth(text, family, size, weight) {
+  measureCtx.font = `${weight} ${size}px ${family}`;
+  return measureCtx.measureText(text).width;
+}
+
+// existing = null creates a new button; an element's data edits it.
+function beginButtonDraft(event, existing = null) {
+  if (activeButtonDraft || activeParagraphDraft) return;
+
+  const rect = canvas.getBoundingClientRect();
+  const base = existing ?? {};
+  const firstPreset = BUTTON_PRESETS[base.preset] ? base.preset : "solid";
+
+  const settings = {
+    preset: firstPreset,
+    text: base.text ?? "Button",
+    customCss: base.customCss ?? "",
+    fontFamily: base.fontFamily ?? fontFamily.value,
+    fontSize: base.fontSize ?? (Number(paragraphFontSize.value) || 16),
+    color: base.color ?? BUTTON_PRESETS[firstPreset].color,
+    background: base.background ?? BUTTON_PRESETS[firstPreset].background
+  };
+
+  // --- Shell (reuses the paragraph popup classes, so your CSS applies) ---
+  const draft = document.createElement("div");
+  draft.className = "paragraph-draft button-draft";
+
+  const toolbar = document.createElement("div");
+  toolbar.className = "paragraph-draft-toolbar";
+
+  const actions = document.createElement("div");
+  actions.className = "paragraph-draft-actions";
+
+  const cancelButton = Object.assign(document.createElement("button"), { type: "button", textContent: "Cancel" });
+  const doneButton = Object.assign(document.createElement("button"), { type: "button", textContent: existing ? "Apply" : "Done" });
+
+  // --- Live preview ---
+  const stage = document.createElement("div");
+  stage.className = "button-preview-stage";
+
+  const preview = document.createElement("div");
+  preview.style.width = "180px";
+  preview.style.height = "48px";
+  stage.appendChild(preview);
+
+  const refresh = () => applyButtonLook(preview, settings);
+
+  // --- Text and href ---
+  const textInput = Object.assign(document.createElement("input"), { type: "text", value: settings.text, maxLength: 200 });
+  textInput.addEventListener("input", () => { settings.text = textInput.value; refresh(); });
+
+  const hrefArea = document.createElement("textarea");
+  hrefArea.rows = 2;
+  hrefArea.placeholder = "https://example.com";
+  hrefArea.value = base.href ?? "";
+
+  const hrefError = document.createElement("div");
+  hrefError.className = "button-error";
+
+  hrefArea.addEventListener("input", () => {
+    hrefError.textContent =
+      safeHref(hrefArea.value) === null
+        ? "Allowed: http(s), mailto, tel, #anchors and relative paths."
+        : "";
+  });
+
+  // --- Paint ---
+  const textPaint = createPaintField("Text paint", {
+    initial: settings.color,
+    onChange: (value) => { settings.color = value; refresh(); }
+  });
+
+  const bgPaint = createPaintField("Background paint", {
+    allowTransparent: true,
+    initial: settings.background,
+    onChange: (value) => { settings.background = value; refresh(); }
+  });
+
+  // --- Typography ---
+  const fontFamilySelect = fontFamily.cloneNode(true);
+  fontFamilySelect.removeAttribute("id");
+  fontFamilySelect.value = settings.fontFamily;
+  fontFamilySelect.addEventListener("change", () => { settings.fontFamily = fontFamilySelect.value; refresh(); });
+
+  const fontSizeInput = paragraphFontSize.cloneNode(true);
+  fontSizeInput.removeAttribute("id");
+  fontSizeInput.value = String(settings.fontSize);
+  fontSizeInput.addEventListener("input", () => {
+    settings.fontSize = Number(fontSizeInput.value) || 16;
+    refresh();
+  });
+
+  // --- Presets: picking one defaults the text and background paint ---
+  const presetButtons = {};
+  const presetRow = document.createElement("div");
+  presetRow.className = "button-preset-row";
+
+  function markActivePreset() {
+    Object.entries(presetButtons).forEach(([key, button]) =>
+      button.setAttribute("aria-pressed", String(key === settings.preset))
+    );
+  }
+
+  function choosePreset(key) {
+    const preset = BUTTON_PRESETS[key];
+
+    settings.preset = key;
+    settings.color = preset.color;
+    settings.background = preset.background;
+
+    textPaint.write(preset.color);
+    bgPaint.write(preset.background);
+
+    markActivePreset();
+    refresh();
+  }
+
+  Object.entries(BUTTON_PRESETS).forEach(([key, preset]) => {
+    const option = Object.assign(document.createElement("button"), {
+      type: "button",
+      className: "button-preset-option",
+      title: preset.label
+    });
+
+    const sample = document.createElement("span");
+    sample.style.height = "34px";
+    applyButtonLook(sample, {
+      preset: key, text: preset.label, color: preset.color,
+      background: preset.background, fontFamily: "Arial", fontSize: 14
+    });
+
+    option.appendChild(sample);
+    option.addEventListener("click", () => choosePreset(key));
+
+    presetButtons[key] = option;
+    presetRow.appendChild(option);
+  });
+
+  // --- Custom CSS ---
+  const customToggle = Object.assign(document.createElement("button"), { type: "button", textContent: "Custom CSS" });
+
+  const customWrap = document.createElement("div");
+  customWrap.hidden = !settings.customCss;
+
+  const customArea = document.createElement("textarea");
+  customArea.rows = 5;
+  customArea.placeholder = "border-radius: 999px;\nletter-spacing: 1px;\nbox-shadow: 0 6px 18px rgba(0,0,0,0.25);";
+  customArea.value = settings.customCss;
+
+  const customError = document.createElement("div");
+  customError.className = "button-error";
+
+  const customHint = document.createElement("div");
+  customHint.className = "button-hint";
+  customHint.textContent = `Allowed: ${[...CUSTOM_CSS_ALLOWED].join(", ")}`;
+
+  function checkCustomCss() {
+    const { rejected } = parseCustomCss(customArea.value);
+    customError.textContent = rejected.length ? `Ignored: ${rejected.join("; ")}` : "";
+  }
+
+  customArea.addEventListener("input", () => {
+    settings.customCss = customArea.value;
+    checkCustomCss();
+    refresh();
+  });
+
+  customToggle.addEventListener("click", () => { customWrap.hidden = !customWrap.hidden; });
+  customWrap.append(customArea, customError, customHint);
+
+  // --- Assemble ---
+  toolbar.append(
+    presetRow,
+    stage,
+    labelled("Button text", textInput),
+    labelled("href", hrefArea),
+    hrefError,
+    textPaint.element,
+    bgPaint.element,
+    labelled("Font", fontFamilySelect),
+    labelled("Size", fontSizeInput),
+    customToggle,
+    customWrap
+  );
+
+  actions.append(cancelButton, doneButton);
+  draft.append(toolbar, actions);
+
+  draft.style.left = `${event.clientX - rect.left}px`;
+  draft.style.top = `${event.clientY - rect.top}px`;
+  canvas.appendChild(draft);
+
+  activeButtonDraft = { draft };
+
+  markActivePreset();
+  checkCustomCss();
+  refresh();
+  textInput.focus();
+
+  cancelButton.addEventListener("click", () => {
+    draft.remove();
+    activeButtonDraft = null;
+  });
+
+  doneButton.addEventListener("click", () => {
+    const href = safeHref(hrefArea.value);
+
+    if (href === null) {
+      hrefError.textContent = "Allowed: http(s), mailto, tel, #anchors and relative paths.";
+      hrefArea.focus();
+      return;
+    }
+
+    const fields = {
+      text: textInput.value.trim() || "Button",
+      href,
+      preset: settings.preset,
+      fontFamily: settings.fontFamily,
+      fontSize: settings.fontSize,
+      color: settings.color,
+      background: settings.background,
+      customCss: serializeCustomCss(settings.customCss)
+    };
+
+    draft.remove();
+    activeButtonDraft = null;
+
+    // Editing an existing button: one undoable step.
+    if (existing) {
+      const before = {};
+      Object.keys(fields).forEach((key) => { before[key] = existing[key]; });
+
+      Object.assign(existing, fields);
+
+      undoStack.push({ type: "buttonEdit", id: existing.id, before, after: { ...fields } });
+      limitHistory(undoStack);
+      redoStack.length = 0;
+
+      updateRenderedElement(existing, ["button"]);
+      return;
+    }
+
+    const preset = BUTTON_PRESETS[fields.preset];
+    const labelWidth = measureLabelWidth(
+      fields.text, fields.fontFamily, fields.fontSize, preset.fontWeight
+    );
+
+    const elementData = {
+      id: crypto.randomUUID(),
+      type: "button",
+      x: parseFloat(draft.style.left),
+      y: parseFloat(draft.style.top),
+      width: Math.max(120, Math.ceil(labelWidth) + 48),
+      height: Math.round(fields.fontSize * 1.5) + 24,
+      ...fields
+    };
+
+    storeInsert(elementData);
+
+    undoStack.push({ type: "place", element: structuredClone(elementData) });
+    limitHistory(undoStack);
+    redoStack.length = 0;
+
+    renderElement(elementData);
+    updateCanvasHeight();
+  });
+}
+
+// --------------------------------------------------
+// HERE STARTS THE BUTTON HELPER FUNCTIONS AND CONSTS
+// --------------------------------------------------
+
+const BUTTON_PRESETS = {
+  solid: {
+    label: "Solid", color: "#ffffff", background: "#3366ff",
+    fontWeight: "600", borderWidth: 0, borderColor: null,
+    borderRadius: 6, boxShadow: "none"
+  },
+  outline: {
+    label: "Outline", color: "#3366ff", background: "transparent",
+    fontWeight: "600", borderWidth: 2, borderColor: "text",
+    borderRadius: 6, boxShadow: "none"
+  },
+  pill: {
+    label: "Pill", color: "#ffffff",
+    background: "linear-gradient(to right, #3366ff, #ff66cc)",
+    fontWeight: "600", borderWidth: 0, borderColor: null,
+    borderRadius: 999, boxShadow: "0 4px 12px rgba(51,102,255,0.35)"
+  },
+  soft: {
+    label: "Soft", color: "#1f3fbf", background: "#e6ecff",
+    fontWeight: "600", borderWidth: 0, borderColor: null,
+    borderRadius: 10, boxShadow: "none"
+  }
+};
+
+const GRADIENT_DIRECTIONS = [
+  ["to right", "Left to right"],
+  ["to left", "Right to left"],
+  ["to bottom", "Top to bottom"],
+  ["to top", "Bottom to top"],
+  ["to bottom right", "Diagonal"],
+  ["to bottom left", "Reverse diagonal"]
+];
+
+// Custom CSS may only use these properties. No url(), no layout properties
+// (position, size, margin, display...), and no text color: use "Text paint".
+const CUSTOM_CSS_ALLOWED = new Set([
+  "background", "background-color", "background-image",
+  "border", "border-width", "border-style", "border-color", "border-radius",
+  "box-shadow", "outline", "opacity", "padding",
+  "font-weight", "font-style", "letter-spacing", "line-height",
+  "text-transform", "text-decoration", "text-shadow"
+]);
+
+function parseCustomCss(css) {
+  const accepted = [];
+  const rejected = [];
+
+  String(css ?? "").split(";").forEach((raw) => {
+    const declaration = raw.trim();
+    if (!declaration) return;
+
+    const colon = declaration.indexOf(":");
+    const prop = declaration.slice(0, colon).trim().toLowerCase();
+    const value = declaration.slice(colon + 1).trim();
+
+    if (
+      colon < 1 ||
+      !CUSTOM_CSS_ALLOWED.has(prop) ||
+      !value ||
+      value.length > 200 ||
+      /[<>{}\\@]|url\s*\(|expression|javascript|!important|var\(|\/\*/i.test(value)
+    ) {
+      rejected.push(declaration);
+      return;
+    }
+
+    accepted.push([prop, value]);
+  });
+
+  return { accepted, rejected };
+}
+
+function serializeCustomCss(css) {
+  return parseCustomCss(css).accepted
+    .map(([prop, value]) => `${prop}: ${value}`)
+    .join("; ");
+}
+
+// Returns "" (no link), a safe href, or null (rejected).
+function safeHref(value) {
+  const href = String(value ?? "")
+    .replace(/[\u0000-\u001f\u007f]/g, "")
+    .trim();
+
+  if (!href) return "";
+
+  const scheme = href.match(/^([a-z][a-z0-9+.-]*):/i);
+
+  if (scheme) {
+    return /^(https?|mailto|tel)$/i.test(scheme[1]) ? href : null;
+  }
+
+  return href; // relative path, #anchor, ?query
+}
+
+function getButtonBorderColor(preset, textColor) {
+  if (preset.borderColor !== "text") return preset.borderColor;
+  return /^#[0-9a-fA-F]{3,8}$/.test(textColor || "") ? textColor : "#3366ff";
+}
+
+// Styles ANY element as a button. Used by the canvas, the popup preview
+// and the preset thumbnails, so what you see is what gets placed.
+function applyButtonLook(element, data) {
+  const preset = BUTTON_PRESETS[data.preset] || BUTTON_PRESETS.solid;
+  const s = element.style;
+
+  // Remove anything the previous custom CSS set.
+  (element._customProps || []).forEach((prop) => s.removeProperty(prop));
+
+  s.display = "flex";
+  s.alignItems = "center";
+  s.justifyContent = "center";
+  s.boxSizing = "border-box";
+  s.textAlign = "center";
+  s.overflow = "hidden";
+  s.userSelect = "none";
+  s.lineHeight = "1.2";
+  s.fontFamily = data.fontFamily || "Arial";
+  s.fontSize = `${data.fontSize || 16}px`;
+  s.fontWeight = preset.fontWeight;
+  s.border = preset.borderWidth
+    ? `${preset.borderWidth}px solid ${getButtonBorderColor(preset, data.color)}`
+    : "none";
+  s.borderRadius = `${preset.borderRadius}px`;
+  s.boxShadow = preset.boxShadow;
+  s.background = data.background || "transparent";
+
+  // Custom CSS goes last so it can override the preset.
+  const { accepted } = parseCustomCss(data.customCss);
+  accepted.forEach(([prop, value]) => s.setProperty(prop, value));
+  element._customProps = accepted.map(([prop]) => prop);
+
+  let label = element.querySelector(".text-content");
+
+  if (!label) {
+    label = document.createElement("span");
+    label.className = "text-content";
+    element.appendChild(label);
+  }
+
+  label.textContent = data.text || "Button";
+  applyParagraphTextColor(element, data); // solid or gradient text
+
+  element.title = data.href ? `Link: ${data.href}` : "";
+}
 
 /* Rest of program logic here and listeners */
 
@@ -1998,6 +2514,11 @@ canvas.addEventListener("click", (event) => {
   // Paragraph mode opens the text editor.
   if (editorMode.value === "paragraph") {
     beginParagraphDraft(event);
+    return;
+  }
+
+  if (editorMode.value === "button") {
+    beginButtonDraft(event);
     return;
   }
 
@@ -2064,6 +2585,9 @@ canvas.addEventListener("click", (event) => {
 let activeDrag = null;
 
 canvas.addEventListener("mousedown", (event) => {
+
+  if (event.target.closest(".paragraph-draft")) return;
+
   if (editorMode.value === "edit") {
     // 1. Resize via a corner handle.
     const handle = event.target.closest(".resize-handle");
@@ -2489,6 +3013,9 @@ function refreshAfterHistoryAction(action) {
       updateToolbarForSelection();
     }
   }
+  else if (action.type === "buttonEdit") {
+    updateRenderedElement(element, ["button"]);
+  }
 }
 
 /* Logic for pushing elements to front and back in the project array
@@ -2575,6 +3102,11 @@ function applyHistoryAction(action, direction) {
     case "move":     // { x, y }
     case "resize":   // { x, y, width, height }
     case "padding": { // padding fields
+      const element = getElementData(action.id);
+      if (element) Object.assign(element, state);
+      break;
+    }
+    case "buttonEdit": { // text, href, preset, paint, customCss...
       const element = getElementData(action.id);
       if (element) Object.assign(element, state);
       break;
@@ -2852,6 +3384,8 @@ function validateWebson(data) {
       throw new Error(`${label} has invalid image data.`);
     }
 
+    if (element.type === "button") return sanitizeButton(element);
+
     return { ...element };
   });
 
@@ -2949,10 +3483,54 @@ function safeFont(value) {
     : "Arial";
 }
 
+function sanitizeButton(element) {
+  const fontSize = Number(element.fontSize);
+
+  return {
+    ...element,
+    text: String(element.text ?? "Button").slice(0, 200),
+    href: safeHref(element.href) ?? "",
+    preset: BUTTON_PRESETS[element.preset] ? element.preset : "solid",
+    color: safePaint(element.color, "#ffffff"),
+    background: safePaint(element.background, "#3366ff"),
+    customCss: serializeCustomCss(element.customCss),
+    fontFamily: safeFont(element.fontFamily),
+    fontSize: Number.isFinite(fontSize) ? Math.min(Math.max(fontSize, 8), 200) : 16
+  };
+}
+
 function getExportHeight(data) {
   return data.type === "text"
     ? measureParagraphHeight(data)
     : Number(data.height);
+}
+
+function buildButtonCss(data) {
+  const preset = BUTTON_PRESETS[data.preset] || BUTTON_PRESETS.solid;
+  const color = safePaint(data.color, "#ffffff");
+  const background = safePaint(data.background, "#3366ff");
+
+  const border = preset.borderWidth
+    ? `${preset.borderWidth}px solid ${getButtonBorderColor(preset, color)}`
+    : "none";
+
+  const base = [
+    "display:flex", "align-items:center", "justify-content:center",
+    "box-sizing:border-box", "text-align:center", "text-decoration:none",
+    "cursor:pointer", "overflow:hidden", "padding:0", "line-height:1.2",
+    `font-family:${safeFont(data.fontFamily)}`,
+    `font-size:${Number(data.fontSize) || 16}px`,
+    `font-weight:${preset.fontWeight}`,
+    `border:${border}`,
+    `border-radius:${preset.borderRadius}px`,
+    `box-shadow:${preset.boxShadow}`,
+    `background:${background}`
+  ];
+
+  const custom = parseCustomCss(data.customCss).accepted
+    .map(([prop, value]) => `${prop}:${value}`);
+
+  return [...base, ...custom].join(";") + ";";
 }
 
 function buildElementHtml(data) {
@@ -3013,13 +3591,23 @@ function buildElementHtml(data) {
   }
 
   if (data.type === "button") {
-    const bg = safePaint(data.background, "#3366ff");
     const color = safePaint(data.color, "#ffffff");
+    const style = attr(`${geometry}height:${height}px;${buildButtonCss(data)}`);
 
-    return `<button type="button" class="el" style="${attr(
-      `${geometry}height:${height}px;background:${bg};color:${color};` +
-      `border:0;font:inherit;cursor:pointer;`
-    )}">${escapeHtml(data.text || "")}</button>`;
+    const labelStyle = isGradientValue(color)
+      ? `color:transparent;background-image:${color};` +
+      `-webkit-background-clip:text;background-clip:text;` +
+      `-webkit-text-fill-color:transparent;`
+      : `color:${color};`;
+
+    const label =
+      `<span style="${attr(labelStyle)}">${escapeHtml(data.text || "Button")}</span>`;
+
+    const href = safeHref(data.href);
+
+    return href
+      ? `<a class="el" href="${escapeHtml(href)}" rel="noopener noreferrer" style="${style}">${label}</a>`
+      : `<button type="button" class="el" style="${style}">${label}</button>`;
   }
 
   return "";
