@@ -29,8 +29,15 @@ const paddingCss = document.getElementById("padding-css");
 const applyPaddingCssButton = document.getElementById("apply-padding-css");
 const paddingCssError = document.getElementById("padding-css-error");
 
+/* controls */
 const colorControls = document.getElementById("color-controls");
 const imageControls = document.getElementById("image-controls");
+const drawControls = document.getElementById("draw-controls");
+
+const drawColor = document.getElementById("draw-color");
+const drawWidth = document.getElementById("draw-width");
+const drawAnimate = document.getElementById("draw-animate");
+const drawFinish = document.getElementById("draw-finish");
 
 const imageUpload = document.getElementById("image-upload");
 const imageWidth = document.getElementById("image-width");
@@ -229,6 +236,14 @@ const elementConfigs = {
     background: "#3366ff",
     color: "#ffffff",
     editableProperties: ["background", "color", "text", "fontFamily", "fontSize", "padding"]
+  },
+
+  drawing: {
+    className: "drawing-block",
+    width: 100,
+    height: 100,
+    background: "transparent",
+    editableProperties: ["color"]
   }
 };
 
@@ -491,6 +506,9 @@ function renderElement(data, parent = canvas) {
     applyElementPadding(element, data);
   }
 
+  if (data.type === "drawing") applyDrawingLook(element, data);
+
+  // TODO see if we will sync height of more elements than text, like drawing or the hasTextContent
   // Keep the data's height in sync with what was actually rendered.
   if (data.type === "text") data.height = parseFloat(element.style.height);
 
@@ -596,6 +614,10 @@ function updateRenderedElement(data, changedProperties = null) {
     applyElementPadding(element, data);
   }
 
+  if (data.type === "drawing" && changed("strokes")) {
+    applyDrawingLook(element, data);
+  }
+
   // Only refresh canvas geometry when dimensions may have changed.
   if (
     changed("size") ||
@@ -608,6 +630,7 @@ function updateRenderedElement(data, changedProperties = null) {
   } else if (changed("position")) {
     updateSelectionOverlay();
   }
+
 }
 
 
@@ -883,6 +906,7 @@ function updateEditorMode() {
   canvas.classList.toggle("place-mode", mode === "place");
   canvas.classList.toggle("move-mode", mode === "move");
   canvas.classList.toggle("edit-mode", mode === "edit");
+  canvas.classList.toggle("draw-mode", mode === "place" && activeType === "drawing");
 
   if (mode !== "place") {
     cancelDrafts();
@@ -1103,6 +1127,8 @@ function updateToolbarForSelection() {
   const isEditMode = editorMode.value === "edit";
   const hasSelection = Boolean(data && activeConfig);
 
+  setHidden(drawControls, !(editorMode.value === "place" && activeType === "drawing"));
+
   setHidden(
     paddingControls,
     !(isEditMode && hasSelection && (data.type === "text" || data.type === "button"))
@@ -1113,7 +1139,8 @@ function updateToolbarForSelection() {
     const editable = activeConfig.editableProperties;
 
     setHidden(backgroundControls, !editable.includes("background"));
-    setHidden(colorControls, activeType === "image");
+    // The colorControls are an enigma in if keep global for edit or have element specific colorControls
+    setHidden(colorControls, activeType === "image" || activeType === "drawing");
     setHidden(fontFamilyControls, !editable.includes("fontFamily"));
     setHidden(fontSizeControls, !editable.includes("fontSize"));
     setHidden(textControls, !editable.includes("text"));
@@ -1354,20 +1381,28 @@ function ghostDisplayValue() {
   return activeType === "button" ? "flex" : "block";
 }
 
+function ghostAllowed() {
+  return (
+    editorMode.value === "place" &&
+    activeType !== "drawing" &&
+    !activeParagraphDraft &&
+    !activeButtonDraft &&
+    !activeDrag &&
+    Boolean(activeConfig)
+  );
+}
+
 let pointerOverCanvas = false;
 
 function updateGhost() {
   renderGhost();
-  if (!pointerOverCanvas) ghostBlock.style.display = "none";
+  if (!pointerOverCanvas || !ghostAllowed()) {
+    ghostBlock.style.display = "none";
+  }
 }
 
 function renderGhost() {
-  if (
-    editorMode.value !== "place" ||
-    activeParagraphDraft ||
-    activeButtonDraft ||
-    !activeConfig
-  ) {
+  if (!ghostAllowed()) {
     ghostBlock.style.display = "none";
     return;
   }
@@ -1703,7 +1738,9 @@ function updateSelectedElementProperty(property, value) {
 
 // Start of ParagraphHandler
 
+// TODO check where the drawSession = null will be set
 function cancelDrafts() {
+  drawSession = null;
   if (activeParagraphDraft) {
     activeParagraphDraft.draft.remove();
     activeParagraphDraft = null;
@@ -2475,6 +2512,246 @@ function beginButtonDraft(event, existing = null) {
   });
 }
 
+// Start of drawing element handlers and functions
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+const SAFE_HEX_RE = /^#[0-9a-fA-F]{3,8}$/;
+
+const round2 = (n) => Math.round(n * 100) / 100;
+
+// Points -> smooth SVG path data. sx/sy scale local points to a target size.
+function strokeToPath(points, sx = 1, sy = 1) {
+  const p = points.map(([x, y]) => [x * sx, y * sy]);
+  const f = round2;
+
+  if (p.length === 1) return `M${f(p[0][0])} ${f(p[0][1])}l0.01 0`; // a dot
+
+  let d = `M${f(p[0][0])} ${f(p[0][1])}`;
+
+  for (let i = 1; i < p.length - 1; i++) {
+    const mx = (p[i][0] + p[i + 1][0]) / 2;
+    const my = (p[i][1] + p[i + 1][1]) / 2;
+    d += `Q${f(p[i][0])} ${f(p[i][1])} ${f(mx)} ${f(my)}`;
+  }
+
+  const last = p[p.length - 1];
+  return d + `L${f(last[0])} ${f(last[1])}`;
+}
+
+// Draws an element's strokes into an <svg> inside it.
+function applyDrawingLook(element, data) {
+  element.style.background = "transparent";
+  element.style.overflow = "visible";
+
+  let svg = element.querySelector("svg");
+
+  if (!svg) {
+    svg = document.createElementNS(SVG_NS, "svg");
+    svg.style.cssText =
+      "position:absolute;left:0;top:0;width:100%;height:100%;" +
+      "overflow:visible;pointer-events:none;display:block;";
+    element.appendChild(svg);
+  }
+
+  svg.setAttribute("viewBox", `0 0 ${data.viewW} ${data.viewH}`);
+  svg.setAttribute("preserveAspectRatio", "none");
+  svg.replaceChildren();
+
+  for (const stroke of data.strokes) {
+    const path = document.createElementNS(SVG_NS, "path");
+    path.setAttribute("d", strokeToPath(stroke.points));
+    path.setAttribute("fill", "none");
+    path.setAttribute("stroke", stroke.color);
+    path.setAttribute("stroke-width", stroke.width);
+    path.setAttribute("stroke-linecap", "round");
+    path.setAttribute("stroke-linejoin", "round");
+    path.setAttribute("vector-effect", "non-scaling-stroke");
+    svg.appendChild(path);
+  }
+}
+
+// --- Live preview while the mouse is down ---
+const liveSvg = document.createElementNS(SVG_NS, "svg");
+liveSvg.style.cssText =
+  "position:absolute;left:0;top:0;width:100%;height:100%;" +
+  "pointer-events:none;z-index:9999;overflow:visible;";
+
+const livePath = document.createElementNS(SVG_NS, "path");
+livePath.setAttribute("fill", "none");
+livePath.setAttribute("stroke-linecap", "round");
+livePath.setAttribute("stroke-linejoin", "round");
+
+liveSvg.appendChild(livePath);
+canvas.appendChild(liveSvg);
+
+let activeStroke = null;
+let drawSession = null; // { id } of the drawing that new strokes join
+let liveFrame = 0;
+
+function canvasPoint(event) {
+  const rect = canvas.getBoundingClientRect();
+
+  return [
+    Math.min(Math.max(event.clientX - rect.left, 0), rect.width),
+    Math.min(Math.max(event.clientY - rect.top, 0), rect.height)
+  ];
+}
+
+function scheduleLiveRender() {
+  if (liveFrame) return;
+
+  liveFrame = requestAnimationFrame(() => {
+    liveFrame = 0;
+    if (activeStroke) {
+      livePath.setAttribute("d", strokeToPath(activeStroke.points));
+    }
+  });
+}
+
+function beginStroke(event) {
+  if (activeStroke) return;
+
+  event.preventDefault();
+
+  activeStroke = {
+    points: [canvasPoint(event)],
+    color: drawColor.value,
+    width: Number(drawWidth.value) || 4
+  };
+
+  livePath.setAttribute("stroke", activeStroke.color);
+  livePath.setAttribute("stroke-width", activeStroke.width);
+  scheduleLiveRender();
+}
+
+document.addEventListener("mousemove", (event) => {
+  if (!activeStroke) return;
+
+  const [x, y] = canvasPoint(event);
+  const last = activeStroke.points[activeStroke.points.length - 1];
+
+  // Thin out the points: skip moves under 2px.
+  if (Math.hypot(x - last[0], y - last[1]) < 2) return;
+
+  activeStroke.points.push([x, y]);
+  scheduleLiveRender();
+});
+
+document.addEventListener("mouseup", () => {
+  if (!activeStroke) return;
+
+  const stroke = activeStroke;
+  activeStroke = null;
+
+  if (liveFrame) {
+    cancelAnimationFrame(liveFrame);
+    liveFrame = 0;
+  }
+
+  livePath.setAttribute("d", "");
+  commitStroke(stroke);
+});
+
+const DRAWING_KEYS = ["x", "y", "width", "height", "viewW", "viewH", "strokes"];
+
+// Adds one finished stroke (canvas coordinates) to the session's drawing,
+// or creates a new drawing, and recomputes the box around ALL strokes.
+function commitStroke(canvasStroke) {
+  const data = drawSession ? getElementData(drawSession.id) : null;
+
+  // 1. Existing strokes back into canvas coordinates.
+  let existing = [];
+
+  if (data) {
+    const left = data.x - data.width / 2;
+    const top = data.y - data.height / 2;
+    const sx = data.width / data.viewW;
+    const sy = data.height / data.viewH;
+
+    existing = data.strokes.map((s) => ({
+      ...s,
+      points: s.points.map(([px, py]) => [left + px * sx, top + py * sy])
+    }));
+  }
+
+  const all = [...existing, canvasStroke];
+
+  // 2. Bounding box, padded by half the line width.
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+
+  for (const s of all) {
+    const pad = s.width / 2 + 1;
+
+    for (const [px, py] of s.points) {
+      minX = Math.min(minX, px - pad);
+      minY = Math.min(minY, py - pad);
+      maxX = Math.max(maxX, px + pad);
+      maxY = Math.max(maxY, py + pad);
+    }
+  }
+
+  const width = Math.max(1, maxX - minX);
+  const height = Math.max(1, maxY - minY);
+
+  // 3. Re-normalize all points relative to the new top-left.
+  const next = {
+    x: minX + width / 2,
+    y: minY + height / 2,
+    width,
+    height,
+    viewW: width,
+    viewH: height,
+    strokes: all.map((s) => ({
+      color: s.color,
+      width: s.width,
+      points: s.points.map(([px, py]) => [round2(px - minX), round2(py - minY)])
+    }))
+  };
+
+  // Continue an existing drawing: one undoable step.
+  if (data) {
+    const before = {};
+    DRAWING_KEYS.forEach((key) => { before[key] = data[key]; });
+
+    Object.assign(data, next);
+
+    undoStack.push({
+      type: "stroke",
+      id: data.id,
+      before,
+      after: structuredClone(next)
+    });
+
+    limitHistory(undoStack);
+    redoStack.length = 0;
+
+    updateRenderedElement(data, ["position", "size", "strokes"]);
+    return;
+  }
+
+  // First stroke: create the element (undone like any placement).
+  const elementData = {
+    id: crypto.randomUUID(),
+    type: "drawing",
+    background: "transparent",
+    animate: drawAnimate.checked,
+    ...next
+  };
+
+  storeInsert(elementData);
+
+  undoStack.push({ type: "place", element: structuredClone(elementData) });
+  limitHistory(undoStack);
+  redoStack.length = 0;
+
+  renderElement(elementData);
+  updateCanvasHeight();
+
+  drawSession = { id: elementData.id };
+}
+
+drawFinish.addEventListener("click", () => { drawSession = null; });
+
 // --------------------------------------------------
 // HERE STARTS THE BUTTON HELPER FUNCTIONS AND CONSTS
 // --------------------------------------------------
@@ -2644,12 +2921,7 @@ canvas.addEventListener("mousemove", (event) => {
 
   pointerOverCanvas = true;
 
-  if (
-    editorMode.value !== "place" ||
-    activeDrag ||
-    activeParagraphDraft ||
-    activeButtonDraft
-  ) {
+  if (!ghostAllowed()) {
     if (ghostBlock.style.display !== "none") ghostBlock.style.display = "none";
     return;
   }
@@ -2692,6 +2964,9 @@ canvas.addEventListener("click", (event) => {
     alert(`Unknown element type "${activeType}". Check the element-type options.`);
     return;
   }
+
+  // Do not place anything after drawing mousedown release == click
+  if (activeType === "drawing") return;
 
   // Paragraphs and buttons are built in their tool popups.
   if (activeType === "text") {
@@ -2763,6 +3038,15 @@ let activeDrag = null;
 canvas.addEventListener("mousedown", (event) => {
 
   if (event.target.closest(".paragraph-draft")) return;
+
+  if (
+    editorMode.value === "place" &&
+    activeType === "drawing" &&
+    event.button === 0
+  ) {
+    beginStroke(event);
+    return;
+  }
 
   if (editorMode.value === "edit") {
     // 1. Resize via a corner handle.
@@ -3172,7 +3456,11 @@ function refreshAfterHistoryAction(action) {
     return;
   }
 
-  if (action.type === "property") {
+  if (action.type === "stroke") {
+    // Redraws the SVG paths and updates box size and position.
+    updateRenderedElement(element, ["position", "size", "strokes"]);
+  }
+  else if (action.type === "property") {
     updateRenderedElement(element, [action.property]);
   }
   else if (action.type === "move") {
@@ -3188,9 +3476,6 @@ function refreshAfterHistoryAction(action) {
       syncPaddingControls(element);
       updateToolbarForSelection();
     }
-  }
-  else if (action.type === "buttonEdit") {
-    updateRenderedElement(element, ["button"]);
   }
 }
 
@@ -3275,6 +3560,8 @@ function restoreElement(snapshot, index) {
  */
 
 // direction: "undo" applies the "before" state, "redo" the "after" state.
+// TODO check if this function can be refined and strip the header specifics
+// direction: "undo" applies the "before" state, "redo" the "after" state.
 function applyHistoryAction(action, direction) {
   const isUndo = direction === "undo";
   const state = isUndo ? action.before : action.after;
@@ -3291,20 +3578,21 @@ function applyHistoryAction(action, direction) {
       break;
 
     case "reorder":
-      // before/after are array indices.
       storeMove(action.id, state);
       break;
 
-    case "move":     // { x, y }
-    case "resize":   // { x, y, width, height }
-    case "padding": { // padding fields
+    case "move":
+    case "resize":
+    case "padding": {
       const element = getElementData(action.id);
       if (element) Object.assign(element, state);
       break;
     }
-    case "buttonEdit": { // text, href, preset, paint, customCss...
+
+    case "stroke": {
       const element = getElementData(action.id);
-      if (element) Object.assign(element, state);
+      // Clone so the live element never shares arrays with the history entry.
+      if (element) Object.assign(element, structuredClone(state));
       break;
     }
 
@@ -3314,7 +3602,6 @@ function applyHistoryAction(action, direction) {
 
       element[action.property] = state;
 
-      // Restore the header's default color when applicable.
       const configValue = isUndo
         ? action.configBefore
         : action.configAfter;
@@ -3325,6 +3612,9 @@ function applyHistoryAction(action, direction) {
       }
       break;
     }
+
+    default:
+      console.warn("Unhandled history action:", action.type);
   }
 }
 
@@ -3581,6 +3871,7 @@ function validateWebson(data) {
     }
 
     if (element.type === "button") return sanitizeButton(element);
+    if (element.type === "drawing") return sanitizeDrawing(element);
 
     return { ...element };
   });
@@ -3695,6 +3986,32 @@ function sanitizeButton(element) {
   };
 }
 
+function sanitizeDrawing(element) {
+  const num = (v, min, max, fallback) =>
+    Number.isFinite(v) ? Math.min(Math.max(v, min), max) : fallback;
+
+  const strokes = (Array.isArray(element.strokes) ? element.strokes : [])
+    .slice(0, 500)
+    .map((s) => ({
+      color: SAFE_HEX_RE.test(s?.color) ? s.color : "#111111",
+      width: num(Number(s?.width), 1, 100, 4),
+      points: (Array.isArray(s?.points) ? s.points : [])
+        .slice(0, 20000)
+        .filter((p) => Array.isArray(p) && Number.isFinite(p[0]) && Number.isFinite(p[1]))
+        .map((p) => [p[0], p[1]])
+    }))
+    .filter((s) => s.points.length > 0);
+
+  return {
+    ...element,
+    background: "transparent",
+    animate: element.animate === true,
+    strokes,
+    viewW: num(Number(element.viewW), 1, 100000, element.width),
+    viewH: num(Number(element.viewH), 1, 100000, element.height)
+  };
+}
+
 function getExportHeight(data) {
   return ["text", "button"].includes(data.type)
     ? measureTextElementHeight(data)
@@ -3806,6 +4123,35 @@ function buildElementHtml(data) {
       : `<button type="button" class="el" style="${style}">${label}</button>`;
   }
 
+  if (data.type === "drawing") {
+    const w = width;
+    const h = height;
+    const sx = w / (Number(data.viewW) || w);
+    const sy = h / (Number(data.viewH) || h);
+    let delay = 0;
+
+    const paths = (data.strokes || []).map((s) => {
+      const color = SAFE_HEX_RE.test(s.color) ? s.color : "#111111";
+      const sw = Math.min(Math.max(Number(s.width) || 4, 1), 100);
+
+      let anim = "";
+      if (data.animate) {
+        // The CSS-Tricks "draw" trick: pathLength=1, dash 1, offset 1 -> 0.
+        anim =
+          ` pathLength="1" style="stroke-dasharray:1;stroke-dashoffset:1;` +
+          `animation:draw-line .8s ease forwards;animation-delay:${delay.toFixed(2)}s"`;
+        delay += 0.8;
+      }
+
+      return `<path d="${strokeToPath(s.points, sx, sy)}" fill="none" stroke="${color}" ` +
+        `stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"${anim}/>`;
+    }).join("");
+
+    return `<svg class="el draw" viewBox="0 0 ${w} ${h}" style="${attr(
+      `${geometry}height:${h}px;overflow:visible;`
+    )}">${paths}</svg>`;
+  }
+
   return "";
 }
 
@@ -3850,6 +4196,15 @@ function buildPageHtml(title) {
     }
     .el { position: absolute; margin: 0; }
     p.el { line-height: 1.5; white-space: pre-wrap; overflow-wrap: break-word; }
+    
+    @keyframes draw-line { to { stroke-dashoffset: 0; } }
+    @media (prefers-reduced-motion: reduce) {
+      .draw path {
+        animation: none !important;
+        stroke-dasharray: none !important;
+        stroke-dashoffset: 0 !important;
+      }
+    }
   </style>
 </head>
 <body>

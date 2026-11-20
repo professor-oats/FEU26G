@@ -80,6 +80,7 @@
       <option value="image">Image</option>
       <option value="text">Paragraph</option>
       <option value="button">Button</option>
+      <option value="drawing">Drawing (free line)</option>
     </select>
     <div id="color-controls">
     <div class="color-target-toggle">
@@ -132,6 +133,12 @@
         <option value="to bottom left">Reverse diagonal</option>
       </select>
     </div>
+    </div>
+    <div id="draw-controls" hidden>
+      <label>Line color <input type="color" id="draw-color" value="#111111"></label>
+      <label>Thickness <input type="range" id="draw-width" min="1" max="40" value="4"></label>
+      <label><input type="checkbox" id="draw-animate"> Animate when exported</label>
+      <button type="button" id="draw-finish">Finish drawing</button>
     </div>
     <div id="image-controls" hidden>
       <label for="image-upload">Upload image:</label>

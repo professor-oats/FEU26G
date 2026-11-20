@@ -430,3 +430,12 @@ body {
 .button-hint {
   color: #666; font-size: 11px;
 }
+
+/* Drawing element styling here */
+
+.draw-mode {
+  cursor: crosshair;
+}
+.draw-mode * {
+  cursor: crosshair;
+}
