@@ -252,7 +252,7 @@ const elementConfigs = {
     width: 100,
     height: 100,
     background: "transparent",
-    editableProperties: ["color"]
+    editableProperties: [] // drawing has its own toolbar + editing properties
   }
 };
 
@@ -860,6 +860,7 @@ function updateSelectionOverlay() {
   selectionOverlay.hidden = false;
 }
 
+// TODO check the broken parameter to renderElement
 function renderProject() {
   domById.forEach((node) => node.remove());
   domById.clear();
@@ -1173,29 +1174,6 @@ function updateToolbarForSelection() {
   setHidden(fontSizeControls, !editable.includes("fontSize"));
   setHidden(textControls, !editable.includes("text"));
 }
-
-/*
-function updateToolbarForSelection() {
-  const data = getSelectedData();
-  const isEditMode = editorMode.value === "edit";
-  const hasSelection = Boolean(data && activeConfig);
-
-  setHidden(
-    paddingControls,
-    !(isEditMode && hasSelection && (data.type === "text" || data.type === "button"))
-  );
-
-  if (!hasSelection) return;
-
-  const editable = activeConfig.editableProperties;
-
-  setHidden(backgroundControls, !editable.includes("background"));
-  setHidden(colorControls, !editable.includes("color"));
-  setHidden(fontFamilyControls, !editable.includes("fontFamily"));
-  setHidden(fontSizeControls, !editable.includes("fontSize"));
-  setHidden(textControls, !editable.includes("text"));
-}
-*/
 
 function selectElement(element) {
   const data = getElementData(element.dataset.id);
@@ -1974,6 +1952,12 @@ function beginParagraphDraft(event) {
 
   const fontSizeLabel = createLabel("Size", fontSizeInput);
 
+  const typeToggle = Object.assign(document.createElement("input"), {
+    type: "checkbox"
+  });
+
+  const typeToggleLabel = createLabel("Type on load (export)", typeToggle);
+
   // --------------------------------------------------
   // BUILD THE POPUP
   // --------------------------------------------------
@@ -1984,7 +1968,8 @@ function beginParagraphDraft(event) {
     backgroundLabel,
     backgroundControls,
     fontFamilyLabel,
-    fontSizeLabel
+    fontSizeLabel,
+    typeToggleLabel
   );
 
   actions.append(cancelButton, doneButton);
@@ -2090,7 +2075,7 @@ function beginParagraphDraft(event) {
   });
 
   doneButton.addEventListener("click", () => {
-    const text = textarea.value.trim();
+    const text = normalizeParagraphText(textarea.value);
 
     if (!text) {
       textarea.focus();
@@ -2110,7 +2095,8 @@ function beginParagraphDraft(event) {
       color: settings.color,
       background: settings.background,
       paddingX: 10,
-      paddingY: 8
+      paddingY: 8,
+      typeAnimate: typeToggle.checked
     };
 
     paragraphDraftPaint.color = settings.color;
@@ -4155,6 +4141,13 @@ function validateWebson(data) {
 
     if (element.type === "button") return sanitizeButton(element);
     if (element.type === "drawing") return sanitizeDrawing(element);
+    if (element.type === "text") {
+      return {
+        ...element,
+        text: normalizeParagraphText(element.text),
+        typeAnimate: element.typeAnimate === true
+      };
+    }
 
     return { ...element };
   });
@@ -4338,6 +4331,159 @@ function buildButtonCss(data) {
   return [...base, ...custom].join(";") + ";";
 }
 
+// Rows the paragraph wraps into, from the editor's own measurement.
+/*
+function typedRowCount(data) {
+  const p = getParagraphPadding(data);
+  const lineHeight = (Number(data.fontSize) || 16) * 1.5;
+  const content = getExportHeight(data) - p.top - p.bottom;
+
+  return Math.max(1, Math.round(content / lineHeight));
+}
+
+// CSS variables that drive the typing animation.
+function typedStyle(data) {
+  const chars = Array.from(String(data.text ?? "")).length;
+  const rows = typedRowCount(data);
+  const total = Math.min(0.04 * chars, 8);       // seconds, max 8
+  const perRow = Math.max(1, Math.ceil(chars / rows));
+  const lineHeight = (Number(data.fontSize) || 16) * 1.5;
+
+  return (
+    `display:block;` +
+    `--L:${rows};--last:${rows - 1};--sj:${Math.max(2, rows)};` +
+    `--lh:${lineHeight}px;--n:${perRow};` +
+    `--rt:${(total / rows).toFixed(3)}s;--T:${total.toFixed(3)}s;`
+  );
+}
+
+ */
+
+// Makes pasted text predictable: one newline style, no hidden characters.
+function normalizeParagraphText(text) {
+  return String(text ?? "")
+    .replace(/\r\n?|[\u2028\u2029\u0085]/g, "\n")
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u200b\u2060\ufeff]/g, "")
+    .replace(/\u00a0/g, " ")
+    .replace(/\t/g, "    ")
+    .replace(/ +\n/g, "\n")     // trailing spaces before a newline
+    .replace(/\n{3,}/g, "\n\n") // at most one blank line in a row
+    .trim();                    // leading/trailing newlines and spaces
+}
+
+let exportExtraCss = []; // per-paragraph @keyframes, filled during export
+
+// Lays the paragraph out off-screen exactly like the exported one and
+// returns, per row: its index, character count and right edge in px.
+function measureTypingRows(data) {
+  const text = normalizeParagraphText(data.text);
+  if (!text) return null;
+
+  const p = getParagraphPadding(data);
+  const fontSize = Number(data.fontSize) || 16;
+  const lh = fontSize * 1.5;
+
+  const box = document.createElement("div");
+  Object.assign(box.style, {
+    position: "absolute", visibility: "hidden", left: "-100000px", top: "0",
+    margin: "0", boxSizing: "border-box",
+    width: `${Number(data.width)}px`,
+    padding: `${p.top}px ${p.right}px ${p.bottom}px ${p.left}px`,
+    fontFamily: safeFont(data.fontFamily),
+    fontSize: `${fontSize}px`,
+    lineHeight: "1.5",
+    whiteSpace: "pre-wrap",
+    overflowWrap: "break-word"
+  });
+
+  const span = document.createElement("span");
+  span.style.display = "block";
+  span.textContent = text;
+  box.appendChild(span);
+  document.body.appendChild(box);
+
+  try {
+    const node = span.firstChild;
+    const origin = span.getBoundingClientRect();
+    const range = document.createRange();
+
+    const pieces = typeof Intl !== "undefined" && Intl.Segmenter
+      ? Array.from(new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(text), (s) => s.segment)
+      : Array.from(text);
+
+    const rows = [];
+    let offset = 0;
+    let total = 0;
+
+    for (const piece of pieces) {
+      const start = offset;
+      offset += piece.length;
+
+      if (piece === "\n") continue; // a newline is not a keystroke
+
+      range.setStart(node, start);
+      range.setEnd(node, offset);
+
+      const rect = range.getClientRects()[0];
+      if (!rect) continue;
+
+      const idx = Math.max(0, Math.floor(((rect.top + rect.bottom) / 2 - origin.top) / lh));
+      const right = rect.right - origin.left;
+      const last = rows[rows.length - 1];
+
+      if (last && idx <= last.idx) {
+        last.count++;
+        last.right = Math.max(last.right, right);
+      } else {
+        rows.push({ idx, count: 1, right });
+      }
+
+      total++;
+    }
+
+    return total ? { rows, total, lh } : null;
+  } finally {
+    box.remove();
+  }
+}
+
+// Returns the inline style that types the paragraph, or null.
+function buildTypingAnimation(data) {
+  const info = measureTypingRows(data);
+  if (!info) return null;
+
+  const { rows, total, lh } = info;
+  const perChar = Math.min(0.04, 8 / total);   // 40ms per key, 8s max
+  const duration = total * perChar;
+  const EPS = 0.0001;                          // % gap between rows
+  const pct = (n) => n.toFixed(4);
+
+  let done = 0;
+
+  const frames = rows.map((row, i) => {
+    const start = i === 0 ? 0 : (done / total) * 100 + EPS;
+    done += row.count;
+    const end = i === rows.length - 1 ? 100 : (done / total) * 100;
+    const width = Math.ceil(row.right) + 1;
+
+    // Row start: width 0, sweeping to the row's right edge in one step per key.
+    // Row end: hold, then jump to the next row's start.
+    return (
+      `${pct(start)}%{--r:${row.idx};--w:0px;animation-timing-function:steps(${row.count},jump-start)}` +
+      `${pct(end)}%{--r:${row.idx};--w:${width}px;animation-timing-function:steps(1,jump-end)}`
+    );
+  }).join("");
+
+  const name = `tw${exportUid++}`;
+  exportExtraCss.push(`@keyframes ${name}{${frames}}`);
+
+  return (
+    `display:block;--lh:${lh}px;` +
+    `animation:${name} ${duration.toFixed(3)}s linear forwards,` +
+    `tw-done 0.001s ${(duration + 0.05).toFixed(3)}s forwards;`
+  );
+}
+
 function buildElementHtml(data) {
   const width = Number(data.width);
   const height = getExportHeight(data);
@@ -4374,8 +4520,14 @@ function buildElementHtml(data) {
       `-webkit-text-fill-color:transparent;`
       : `color:${color};`;
 
+    const text = normalizeParagraphText(data.text);
+    const typing =
+      data.typeAnimate === true && text ? buildTypingAnimation(data) : null;
+
+    const innerStyle = typing ? `${inner}${typing}` : inner;
+
     // No whitespace between tags: the paragraph uses white-space: pre-wrap.
-    return `<p class="el" style="${attr(outer)}"><span style="${attr(inner)}">${escapeHtml(data.text)}</span></p>`;
+    return `<p class="el" style="${attr(outer)}"><span${typing ? ` class="tw"` : ""} style="${attr(innerStyle)}">${escapeHtml(text)}</span></p>`;
   }
 
   if (data.type === "image") {
@@ -4486,6 +4638,8 @@ function buildPageHtml(title) {
       ? canvasBg
       : "#ffffff";
 
+  exportExtraCss = [];
+
   const body = project.elements
     .map(buildElementHtml)
     .filter(Boolean)
@@ -4517,6 +4671,26 @@ function buildPageHtml(title) {
         stroke-dasharray: none !important;
         stroke-dashoffset: 0 !important;
       }
+    }
+    @property --w { syntax: "<length>"; inherits: false; initial-value: 0px; }
+    @property --r { syntax: "<number>"; inherits: false; initial-value: 0; }
+
+    .tw {
+      --lh: 24px;
+      -webkit-mask-image: linear-gradient(#000 0 0), linear-gradient(#000 0 0);
+      mask-image: linear-gradient(#000 0 0), linear-gradient(#000 0 0);
+      -webkit-mask-repeat: no-repeat;
+      mask-repeat: no-repeat;
+      /* layer 1: finished rows, layer 2: the row being typed */
+      -webkit-mask-size: 100% calc(var(--r) * var(--lh)), var(--w) var(--lh);
+      mask-size: 100% calc(var(--r) * var(--lh)), var(--w) var(--lh);
+      -webkit-mask-position: 0 0, 0 calc(var(--r) * var(--lh));
+      mask-position: 0 0, 0 calc(var(--r) * var(--lh));
+    }
+    @keyframes tw-done { to { -webkit-mask-image: none; mask-image: none; } }
+    ${exportExtraCss.join("\n    ")}
+    @media (prefers-reduced-motion: reduce) {
+      .tw { animation: none !important; -webkit-mask: none !important; mask: none !important; }
     }
   </style>
 </head>
