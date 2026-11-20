@@ -39,6 +39,15 @@ const drawWidth = document.getElementById("draw-width");
 const drawAnimate = document.getElementById("draw-animate");
 const drawFinish = document.getElementById("draw-finish");
 
+const drawPaintMode = document.getElementById("draw-paint-mode");
+const drawSolidLabel = document.getElementById("draw-solid-label");
+const drawGradientControls = document.getElementById("draw-gradient-controls");
+const drawStopsBox = document.getElementById("draw-stops");
+const drawAddStop = document.getElementById("draw-add-stop");
+const drawRainbow = document.getElementById("draw-rainbow");
+const drawHard = document.getElementById("draw-hard");
+const drawSessionControls = document.getElementById("draw-session-controls");
+
 const imageUpload = document.getElementById("image-upload");
 const imageWidth = document.getElementById("image-width");
 const imageHeight = document.getElementById("image-height");
@@ -1127,7 +1136,14 @@ function updateToolbarForSelection() {
   const isEditMode = editorMode.value === "edit";
   const hasSelection = Boolean(data && activeConfig);
 
-  setHidden(drawControls, !(editorMode.value === "place" && activeType === "drawing"));
+  const selectedDrawing =
+    editorMode.value === "edit" && getSelectedData()?.type === "drawing";
+
+  setHidden(
+    drawControls,
+    !((editorMode.value === "place" && activeType === "drawing") || selectedDrawing)
+  );
+  setHidden(drawSessionControls, selectedDrawing); // Finish/animate are Place-only
 
   setHidden(
     paddingControls,
@@ -1206,6 +1222,7 @@ function selectElement(element) {
     syncPaddingControls(data);
   }
 
+  if (data.type === "drawing") syncPenFrom(data);
   syncPaintControlsTo(data, data.type);
   updateToolbarForSelection();
 }
@@ -2122,6 +2139,8 @@ function beginParagraphDraft(event) {
 function syncTypographyControls() {
   const data = getSelectedData();
 
+  if (data?.type === "drawing") syncPenFrom(data);
+
   if (data?.type === "text") {
     fontFamily.value = data.fontFamily || "Arial";
     paragraphFontSize.value = String(data.fontSize || 16);
@@ -2538,6 +2557,109 @@ function strokeToPath(points, sx = 1, sy = 1) {
   return d + `L${f(last[0])} ${f(last[1])}`;
 }
 
+const hasGradient = (s) => Array.isArray(s.stops) && s.stops.length >= 2;
+
+function hexToRgb(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+// t in 0..1 along the stroke. Stops must be #rrggbb.
+function colorAt(stops, t, hard) {
+  const n = stops.length;
+
+  if (hard) return stops[Math.min(n - 1, Math.floor(t * n))];
+
+  const scaled = Math.min(Math.max(t, 0), 1) * (n - 1);
+  const i = Math.min(Math.floor(scaled), n - 2);
+  const k = scaled - i;
+  const a = hexToRgb(stops[i]);
+  const b = hexToRgb(stops[i + 1]);
+
+  return "#" + a
+    .map((v, j) => Math.round(v + (b[j] - v) * k).toString(16).padStart(2, "0"))
+    .join("");
+}
+
+// The same smooth curve as strokeToPath, but as separate pieces with lengths.
+function strokePieces(points, sx, sy) {
+  const p = points.map(([x, y]) => [x * sx, y * sy]);
+  const f = round2;
+  const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+  const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+
+  if (p.length === 1) return [{ start: p[0], cmd: "l0.01 0", len: 0.01 }];
+
+  if (p.length === 2) {
+    return [{ start: p[0], cmd: `L${f(p[1][0])} ${f(p[1][1])}`, len: dist(p[0], p[1]) }];
+  }
+
+  const pieces = [];
+  let start = p[0];
+
+  for (let i = 1; i < p.length - 1; i++) {
+    const end = mid(p[i], p[i + 1]);
+
+    pieces.push({
+      start,
+      cmd: `Q${f(p[i][0])} ${f(p[i][1])} ${f(end[0])} ${f(end[1])}`,
+      len: dist(start, p[i]) + dist(p[i], end)
+    });
+
+    start = end;
+  }
+
+  const last = p[p.length - 1];
+  pieces.push({ start, cmd: `L${f(last[0])} ${f(last[1])}`, len: dist(start, last) });
+
+  return pieces;
+}
+
+// Solid stroke: one part. Gradient stroke: many short, colored bands.
+function strokeParts(stroke, sx = 1, sy = 1) {
+  if (!hasGradient(stroke)) {
+    return [{ d: strokeToPath(stroke.points, sx, sy), color: stroke.color }];
+  }
+
+  const pieces = strokePieces(stroke.points, sx, sy);
+  const total = pieces.reduce((sum, piece) => sum + piece.len, 0) || 1;
+  const step = Math.max(2, total / 200); // at most ~200 bands per stroke
+
+  const parts = [];
+  let i = 0;
+  let done = 0;
+
+  while (i < pieces.length) {
+    let d = `M${round2(pieces[i].start[0])} ${round2(pieces[i].start[1])}`;
+    let len = 0;
+
+    while (i < pieces.length && (len === 0 || len < step)) {
+      d += pieces[i].cmd;
+      len += pieces[i].len;
+      i++;
+    }
+
+    parts.push({ d, color: colorAt(stroke.stops, (done + len / 2) / total, stroke.hard) });
+    done += len;
+  }
+
+  return parts;
+}
+
+function strokeElements(stroke, sx = 1, sy = 1) {
+  return strokeParts(stroke, sx, sy).map((part) => {
+    const path = document.createElementNS(SVG_NS, "path");
+    path.setAttribute("d", part.d);
+    path.setAttribute("fill", "none");
+    path.setAttribute("stroke", part.color);
+    path.setAttribute("stroke-width", stroke.width);
+    path.setAttribute("stroke-linecap", "round");
+    path.setAttribute("stroke-linejoin", "round");
+    path.setAttribute("vector-effect", "non-scaling-stroke");
+    return path;
+  });
+}
+
 // Draws an element's strokes into an <svg> inside it.
 function applyDrawingLook(element, data) {
   element.style.background = "transparent";
@@ -2557,6 +2679,7 @@ function applyDrawingLook(element, data) {
   svg.setAttribute("preserveAspectRatio", "none");
   svg.replaceChildren();
 
+  /*
   for (const stroke of data.strokes) {
     const path = document.createElementNS(SVG_NS, "path");
     path.setAttribute("d", strokeToPath(stroke.points));
@@ -2568,6 +2691,12 @@ function applyDrawingLook(element, data) {
     path.setAttribute("vector-effect", "non-scaling-stroke");
     svg.appendChild(path);
   }
+
+  */
+
+  for (const stroke of data.strokes) {
+    svg.append(...strokeElements(stroke));
+  }
 }
 
 // --- Live preview while the mouse is down ---
@@ -2576,12 +2705,15 @@ liveSvg.style.cssText =
   "position:absolute;left:0;top:0;width:100%;height:100%;" +
   "pointer-events:none;z-index:9999;overflow:visible;";
 
-const livePath = document.createElementNS(SVG_NS, "path");
-livePath.setAttribute("fill", "none");
-livePath.setAttribute("stroke-linecap", "round");
-livePath.setAttribute("stroke-linejoin", "round");
+function scheduleLiveRender() {
+  if (liveFrame) return;
 
-liveSvg.appendChild(livePath);
+  liveFrame = requestAnimationFrame(() => {
+    liveFrame = 0;
+    if (activeStroke) liveSvg.replaceChildren(...strokeElements(activeStroke));
+  });
+}
+
 canvas.appendChild(liveSvg);
 
 let activeStroke = null;
@@ -2597,30 +2729,24 @@ function canvasPoint(event) {
   ];
 }
 
-function scheduleLiveRender() {
-  if (liveFrame) return;
-
-  liveFrame = requestAnimationFrame(() => {
-    liveFrame = 0;
-    if (activeStroke) {
-      livePath.setAttribute("d", strokeToPath(activeStroke.points));
-    }
-  });
-}
-
 function beginStroke(event) {
   if (activeStroke) return;
 
+  if (document.activeElement instanceof HTMLElement) {
+    document.activeElement.blur();
+  }
+
   event.preventDefault();
+
+  const pen = readPen();
 
   activeStroke = {
     points: [canvasPoint(event)],
-    color: drawColor.value,
-    width: Number(drawWidth.value) || 4
+    width: pen.width,
+    ...penFields(pen),
+    targetId: drawSession ? drawSession.id : null
   };
 
-  livePath.setAttribute("stroke", activeStroke.color);
-  livePath.setAttribute("stroke-width", activeStroke.width);
   scheduleLiveRender();
 }
 
@@ -2648,38 +2774,16 @@ document.addEventListener("mouseup", () => {
     liveFrame = 0;
   }
 
-  livePath.setAttribute("d", "");
+  liveSvg.replaceChildren();
   commitStroke(stroke);
 });
 
 const DRAWING_KEYS = ["x", "y", "width", "height", "viewW", "viewH", "strokes"];
 
-// Adds one finished stroke (canvas coordinates) to the session's drawing,
-// or creates a new drawing, and recomputes the box around ALL strokes.
-function commitStroke(canvasStroke) {
-  const data = drawSession ? getElementData(drawSession.id) : null;
-
-  // 1. Existing strokes back into canvas coordinates.
-  let existing = [];
-
-  if (data) {
-    const left = data.x - data.width / 2;
-    const top = data.y - data.height / 2;
-    const sx = data.width / data.viewW;
-    const sy = data.height / data.viewH;
-
-    existing = data.strokes.map((s) => ({
-      ...s,
-      points: s.points.map(([px, py]) => [left + px * sx, top + py * sy])
-    }));
-  }
-
-  const all = [...existing, canvasStroke];
-
-  // 2. Bounding box, padded by half the line width.
+function buildDrawingGeometry(allStrokes) {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
 
-  for (const s of all) {
+  for (const s of allStrokes) {
     const pad = s.width / 2 + 1;
 
     for (const [px, py] of s.points) {
@@ -2693,27 +2797,38 @@ function commitStroke(canvasStroke) {
   const width = Math.max(1, maxX - minX);
   const height = Math.max(1, maxY - minY);
 
-  // 3. Re-normalize all points relative to the new top-left.
-  const next = {
+  return {
     x: minX + width / 2,
     y: minY + height / 2,
     width,
     height,
     viewW: width,
     viewH: height,
-    strokes: all.map((s) => ({
-      color: s.color,
-      width: s.width,
+    strokes: allStrokes.map((s) => ({
+      ...s,
       points: s.points.map(([px, py]) => [round2(px - minX), round2(py - minY)])
     }))
   };
+}
 
-  // Continue an existing drawing: one undoable step.
+// Adds one finished stroke (canvas coordinates) to the session's drawing,
+// or creates a new drawing, and recomputes the box around ALL strokes.
+function commitStroke(stroke) {
+  // targetId was locked at mousedown; it is not part of the stored stroke.
+  const { targetId, ...strokeOnly } = stroke;
+  const data = targetId ? getElementData(targetId) : null;
+
+  // A) Add a path to the existing drawing: one undo step.
   if (data) {
+    const next = buildDrawingGeometry([
+      ...drawingToCanvasStrokes(data),
+      strokeOnly
+    ]);
+
     const before = {};
     DRAWING_KEYS.forEach((key) => { before[key] = data[key]; });
 
-    Object.assign(data, next);
+    Object.assign(data, next); // strokes is a new array, so old snapshots stay valid
 
     undoStack.push({
       type: "stroke",
@@ -2726,16 +2841,16 @@ function commitStroke(canvasStroke) {
     redoStack.length = 0;
 
     updateRenderedElement(data, ["position", "size", "strokes"]);
-    return;
+    return; // the session stays open
   }
 
-  // First stroke: create the element (undone like any placement).
+  // B) No drawing yet (or its target is gone): create one.
   const elementData = {
     id: crypto.randomUUID(),
     type: "drawing",
     background: "transparent",
     animate: drawAnimate.checked,
-    ...next
+    ...buildDrawingGeometry([strokeOnly])
   };
 
   storeInsert(elementData);
@@ -2751,6 +2866,174 @@ function commitStroke(canvasStroke) {
 }
 
 drawFinish.addEventListener("click", () => { drawSession = null; });
+
+const MAX_STOPS = 8;
+const RAINBOW = ["#ff0000", "#ff9900", "#ffee00", "#22cc44", "#2299ff", "#4b2bff", "#cc33ff"];
+
+function createStopsEditor(container, onChange) {
+  let stops = ["#ff0000", "#2299ff"];
+
+  function render() {
+    container.replaceChildren();
+
+    stops.forEach((hex, i) => {
+      const row = document.createElement("span");
+      row.className = "draw-stop";
+
+      const input = Object.assign(document.createElement("input"), { type: "color", value: hex });
+      input.addEventListener("input", () => { stops[i] = input.value; onChange(); });
+
+      const remove = Object.assign(document.createElement("button"), {
+        type: "button", textContent: "×", title: "Remove color"
+      });
+      remove.disabled = stops.length <= 2;
+      remove.addEventListener("click", () => { stops.splice(i, 1); render(); onChange(); });
+
+      row.append(input, remove);
+      container.appendChild(row);
+    });
+  }
+
+  render();
+
+  return {
+    get: () => [...stops],
+    set(list) { stops = list.slice(0, MAX_STOPS); render(); }, // no onChange
+    add() {
+      if (stops.length >= MAX_STOPS) return;
+      stops.push(stops[stops.length - 1]);
+      render();
+      onChange();
+    }
+  };
+}
+
+const stopsEditor = createStopsEditor(drawStopsBox, onPenChange);
+
+function syncPenVisibility() {
+  const gradient = drawPaintMode.value === "gradient";
+  drawSolidLabel.hidden = gradient;
+  drawGradientControls.hidden = !gradient;
+}
+
+function readPen() {
+  const gradient = drawPaintMode.value === "gradient";
+
+  return {
+    width: Number(drawWidth.value) || 4,
+    color: drawColor.value,
+    stops: gradient ? stopsEditor.get() : null,
+    hard: drawHard.checked
+  };
+}
+
+// The color fields stored on a stroke.
+function penFields(pen) {
+  return pen.stops
+    ? { color: pen.stops[0], stops: pen.stops, hard: pen.hard }
+    : { color: pen.color };
+}
+
+// Make the controls show a drawing's current style (no onChange fired).
+function syncPenFrom(data) {
+  const last = data.strokes[data.strokes.length - 1];
+  if (!last) return;
+
+  drawWidth.value = String(last.width);
+
+  if (hasGradient(last)) {
+    drawPaintMode.value = "gradient";
+    stopsEditor.set(last.stops);
+    drawHard.checked = Boolean(last.hard);
+  } else {
+    drawPaintMode.value = "solid";
+    if (/^#[0-9a-fA-F]{6}$/.test(last.color)) drawColor.value = last.color;
+  }
+
+  syncPenVisibility();
+}
+
+function drawingToCanvasStrokes(data) {
+  const left = data.x - data.width / 2;
+  const top = data.y - data.height / 2;
+  const sx = data.width / data.viewW;
+  const sy = data.height / data.viewH;
+
+  return data.strokes.map((s) => ({
+    ...s,
+    points: s.points.map(([px, py]) => [left + px * sx, top + py * sy])
+  }));
+}
+
+let lastStyleEdit = { id: null, time: 0 };
+
+// Edit mode: apply the panel's style to every stroke of the selected drawing.
+function applyPenToSelectedDrawing() {
+  if (editorMode.value !== "edit") return;
+
+  const data = getSelectedData();
+  if (!data || data.type !== "drawing" || data.strokes.length === 0) return;
+
+  const pen = readPen();
+  const fields = penFields(pen);
+
+  const restyled = drawingToCanvasStrokes(data).map(({ stops, hard, ...s }) => ({
+    ...s,
+    width: pen.width,
+    ...fields
+  }));
+
+  const next = buildDrawingGeometry(restyled);
+
+  const styleOf = (list) => JSON.stringify(
+    list.map(({ color, width, stops, hard }) => [color, width, stops ?? null, Boolean(hard)])
+  );
+
+  if (styleOf(data.strokes) === styleOf(next.strokes)) return;
+
+  const before = {};
+  DRAWING_KEYS.forEach((key) => { before[key] = data[key]; });
+
+  // Merge quick successive tweaks (slider drags) into one undo step.
+  const now = performance.now();
+  const top = undoStack[undoStack.length - 1];
+  const merge =
+    top && top.style && top.id === data.id &&
+    lastStyleEdit.id === data.id && now - lastStyleEdit.time < 800;
+
+  Object.assign(data, next);
+
+  if (merge) {
+    top.after = structuredClone(next);
+  } else {
+    undoStack.push({
+      type: "stroke",
+      style: true,
+      id: data.id,
+      before,
+      after: structuredClone(next)
+    });
+    limitHistory(undoStack);
+  }
+
+  lastStyleEdit = { id: data.id, time: now };
+  redoStack.length = 0;
+
+  updateRenderedElement(data, ["position", "size", "strokes"]);
+}
+
+function onPenChange() {
+  applyPenToSelectedDrawing(); // does nothing outside Edit mode
+}
+
+drawPaintMode.addEventListener("change", () => { syncPenVisibility(); onPenChange(); });
+drawColor.addEventListener("input", onPenChange);
+drawWidth.addEventListener("input", onPenChange);
+drawHard.addEventListener("change", onPenChange);
+drawAddStop.addEventListener("click", () => stopsEditor.add());
+drawRainbow.addEventListener("click", () => { stopsEditor.set(RAINBOW); onPenChange(); });
+
+syncPenVisibility();
 
 // --------------------------------------------------
 // HERE STARTS THE BUTTON HELPER FUNCTIONS AND CONSTS
@@ -3956,6 +4239,8 @@ function escapeHtml(value) {
     .replace(/'/g, "&#39;");
 }
 
+let exportUid = 0;
+
 const SAFE_PAINT_RE =
   /^(transparent|#[0-9a-fA-F]{3,8}|linear-gradient\([a-z\s]+,\s*#[0-9a-fA-F]{3,8},\s*#[0-9a-fA-F]{3,8}\))$/;
 
@@ -3992,14 +4277,21 @@ function sanitizeDrawing(element) {
 
   const strokes = (Array.isArray(element.strokes) ? element.strokes : [])
     .slice(0, 500)
-    .map((s) => ({
-      color: SAFE_HEX_RE.test(s?.color) ? s.color : "#111111",
-      width: num(Number(s?.width), 1, 100, 4),
-      points: (Array.isArray(s?.points) ? s.points : [])
-        .slice(0, 20000)
-        .filter((p) => Array.isArray(p) && Number.isFinite(p[0]) && Number.isFinite(p[1]))
-        .map((p) => [p[0], p[1]])
-    }))
+    .map((s) => {
+      const stops = Array.isArray(s?.stops)
+        ? s.stops.filter((c) => /^#[0-9a-fA-F]{6}$/.test(c)).slice(0, 8)
+        : [];
+
+      return {
+        color: SAFE_HEX_RE.test(s?.color) ? s.color : "#111111",
+        width: num(Number(s?.width), 1, 100, 4),
+        ...(stops.length >= 2 ? { stops, hard: s.hard === true } : {}),
+        points: (Array.isArray(s?.points) ? s.points : [])
+          .slice(0, 20000)
+          .filter((p) => Array.isArray(p) && Number.isFinite(p[0]) && Number.isFinite(p[1]))
+          .map((p) => [p[0], p[1]])
+      };
+    })
     .filter((s) => s.points.length > 0);
 
   return {
@@ -4131,20 +4423,41 @@ function buildElementHtml(data) {
     let delay = 0;
 
     const paths = (data.strokes || []).map((s) => {
-      const color = SAFE_HEX_RE.test(s.color) ? s.color : "#111111";
       const sw = Math.min(Math.max(Number(s.width) || 4, 1), 100);
+      const round = `fill="none" stroke-linecap="round" stroke-linejoin="round"`;
 
-      let anim = "";
-      if (data.animate) {
-        // The CSS-Tricks "draw" trick: pathLength=1, dash 1, offset 1 -> 0.
-        anim =
+      const dashAnim = () => {
+        const style =
           ` pathLength="1" style="stroke-dasharray:1;stroke-dashoffset:1;` +
           `animation:draw-line .8s ease forwards;animation-delay:${delay.toFixed(2)}s"`;
         delay += 0.8;
+        return style;
+      };
+
+      // Gradient: colored bands, revealed by an animated mask when animating.
+      if (hasGradient(s) && s.stops.every((c) => /^#[0-9a-fA-F]{6}$/.test(c))) {
+        const bands = strokeParts(s, sx, sy)
+          .map((part) => `<path d="${part.d}" ${round} stroke="${part.color}" stroke-width="${sw}"/>`)
+          .join("");
+
+        if (!data.animate) return bands;
+
+        const id = `m${exportUid++}`;
+
+        return (
+          `<mask id="${id}" maskUnits="userSpaceOnUse" x="-50" y="-50" ` +
+          `width="${w + 100}" height="${h + 100}">` +
+          `<path d="${strokeToPath(s.points, sx, sy)}" ${round} stroke="#fff" ` +
+          `stroke-width="${sw + 2}"${dashAnim()}/></mask>` +
+          `<g mask="url(#${id})">${bands}</g>`
+        );
       }
 
-      return `<path d="${strokeToPath(s.points, sx, sy)}" fill="none" stroke="${color}" ` +
-        `stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"${anim}/>`;
+      // Solid stroke (unchanged behavior).
+      const color = SAFE_HEX_RE.test(s.color) ? s.color : "#111111";
+
+      return `<path d="${strokeToPath(s.points, sx, sy)}" ${round} stroke="${color}" ` +
+        `stroke-width="${sw}"${data.animate ? dashAnim() : ""}/>`;
     }).join("");
 
     return `<svg class="el draw" viewBox="0 0 ${w} ${h}" style="${attr(

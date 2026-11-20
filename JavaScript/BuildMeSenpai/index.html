@@ -135,10 +135,32 @@
     </div>
     </div>
     <div id="draw-controls" hidden>
-      <label>Line color <input type="color" id="draw-color" value="#111111"></label>
-      <label>Thickness <input type="range" id="draw-width" min="1" max="40" value="4"></label>
-      <label><input type="checkbox" id="draw-animate"> Animate when exported</label>
-      <button type="button" id="draw-finish">Finish drawing</button>
+      <label>Line paint
+        <select id="draw-paint-mode">
+          <option value="solid">Solid</option>
+          <option value="gradient">Gradient</option>
+        </select>
+      </label>
+
+      <label id="draw-solid-label">Color
+        <input type="color" id="draw-color" value="#111111">
+      </label>
+
+      <div id="draw-gradient-controls" hidden>
+        <span id="draw-stops"></span>
+        <button type="button" id="draw-add-stop">+ Color</button>
+        <button type="button" id="draw-rainbow">Rainbow</button>
+        <label><input type="checkbox" id="draw-hard"> Hard steps</label>
+      </div>
+
+      <label>Thickness
+        <input type="range" id="draw-width" min="1" max="40" value="4">
+      </label>
+
+      <div id="draw-session-controls">
+        <label><input type="checkbox" id="draw-animate"> Animate when exported</label>
+        <button type="button" id="draw-finish">Finish drawing</button>
+      </div>
     </div>
     <div id="image-controls" hidden>
       <label for="image-upload">Upload image:</label>

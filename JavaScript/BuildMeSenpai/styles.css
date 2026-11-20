@@ -89,6 +89,14 @@ body {
   cursor: pointer;
 }
 
+#website-canvas.draw-mode {
+  cursor: crosshair;
+}
+
+#website-canvas.draw-mode .element {
+  cursor: crosshair;
+}
+
 #toolbar {
   cursor: default;
 }
@@ -438,4 +446,10 @@ body {
 }
 .draw-mode * {
   cursor: crosshair;
+}
+
+.draw-stop {
+  display: inline-flex;
+  gap: 2px;
+  margin-right: 6px;
 }
