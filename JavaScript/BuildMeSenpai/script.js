@@ -663,6 +663,146 @@ const resizeHandles = {};
 
 canvas.appendChild(selectionOverlay);
 
+const PEN_SVG =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+  'stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/>' +
+  '<path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>';
+
+const CHECK_SVG =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" ' +
+  'stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
+
+const textEditButton = document.createElement("button");
+textEditButton.type = "button";
+textEditButton.className = "overlay-action";
+textEditButton.hidden = true;
+selectionOverlay.appendChild(textEditButton);
+
+function setTextEditIcon(editing) {
+  textEditButton.innerHTML = editing ? CHECK_SVG : PEN_SVG;
+  textEditButton.classList.toggle("is-editing", editing);
+  textEditButton.title = editing ? "Done editing text" : "Edit text";
+  textEditButton.setAttribute("aria-label", textEditButton.title);
+}
+
+setTextEditIcon(false);
+
+let textEdit = null; // { id, node, abort }
+
+function insertPlainText(text) {
+  document.execCommand("insertText", false, text);
+}
+
+function startTextEdit() {
+  if (textEdit || editorMode.value !== "edit") return;
+
+  const data = getSelectedData();
+  if (!data || data.type !== "text") return;
+
+  const node = domById.get(data.id)?.querySelector(".text-content");
+  if (!node) return;
+
+  const abort = new AbortController();
+  const { signal } = abort;
+  textEdit = { id: data.id, node, abort };
+
+  node.contentEditable = "true";
+  node.spellcheck = false;
+  node.style.userSelect = "text";
+  node.style.cursor = "text";
+  node.style.outline = "none";
+  node.style.caretColor = "#111"; // gradient text has a transparent color
+
+  // Keep the box and outline growing with the text.
+  node.addEventListener("input", () => {
+    const height = measureParagraphHeight({ ...data, text: node.innerText });
+
+    data.height = height;
+    domById.get(data.id).style.height = `${height}px`;
+    updateSelectionOverlay();
+    updateCanvasHeight();
+  }, { signal });
+
+  node.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      endTextEdit(false);
+    } else if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      endTextEdit(true);
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      insertPlainText("\n"); // never let the browser insert <div>/<br>
+    }
+  }, { signal });
+
+  // Paste as plain text only.
+  node.addEventListener("paste", (event) => {
+    event.preventDefault();
+    insertPlainText(event.clipboardData.getData("text/plain"));
+  }, { signal });
+
+  setTextEditIcon(true);
+
+  // Caret at the end of the text.
+  node.focus();
+  const range = document.createRange();
+  range.selectNodeContents(node);
+  range.collapse(false);
+  const selection = window.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
+// commit = true saves as one undo step; false restores the old text.
+function endTextEdit(commit) {
+  if (!textEdit) return;
+
+  const { id, node, abort } = textEdit;
+  textEdit = null;
+  abort.abort();
+
+  const raw = node.innerText;
+
+  node.removeAttribute("contenteditable");
+  node.style.userSelect = "";
+  node.style.cursor = "";
+  node.style.outline = "";
+  node.style.caretColor = "";
+  window.getSelection()?.removeAllRanges();
+  setTextEditIcon(false);
+
+  const data = getElementData(id);
+  if (!data) return;
+
+  const value = normalizeParagraphText(raw);
+
+  // Empty text is not allowed, so it falls back to the old text.
+  if (commit && value && value !== data.text) {
+    const before = data.text;
+    data.text = value;
+
+    undoStack.push({ type: "property", id, property: "text", before, after: value });
+    limitHistory(undoStack);
+    redoStack.length = 0;
+  }
+
+  // Rebuild the node text and re-measure the height from the stored text.
+  updateRenderedElement(data, ["text"]);
+}
+
+// Stop these mouse events before the canvas sees them, and keep focus.
+textEditButton.addEventListener("mousedown", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+});
+
+textEditButton.addEventListener("click", (event) => {
+  event.stopPropagation();
+  if (textEdit) endTextEdit(true);
+  else startTextEdit();
+});
+
 
 /* SMART ALIGNMENT GUIDES */
 
@@ -857,6 +997,7 @@ function updateSelectionOverlay() {
   selectionOverlay.style.top = `${data.y}px`;
   selectionOverlay.style.width = `${data.width}px`;
   selectionOverlay.style.height = `${data.height}px`;
+  textEditButton.hidden = data.type !== "text";
   selectionOverlay.hidden = false;
 }
 
@@ -926,6 +1067,8 @@ function updateEditorMode() {
   if (mode !== "move") {
     hideAlignmentGuides();
   }
+
+  if (mode !== "edit") endTextEdit(true);
 
   updateGhost();
   updateSelectionOverlay();
@@ -3308,6 +3451,15 @@ canvas.addEventListener("mousedown", (event) => {
 
   if (event.target.closest(".paragraph-draft")) return;
 
+  if (textEdit) {
+    const inside =
+      event.target.closest(".element")?.dataset.id === textEdit.id;
+
+    if (inside) return; // let the browser place the caret / select text
+
+    endTextEdit(true);
+  }
+
   if (
     editorMode.value === "place" &&
     activeType === "drawing" &&
@@ -4170,6 +4322,7 @@ function applyProjectState(state) {
 
   // Drop anything tied to the old project.
   selectedElementId = null;
+  endTextEdit(false);
   activeResize = null;
   activeDrag = null;
 

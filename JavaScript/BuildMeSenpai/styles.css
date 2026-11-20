@@ -140,6 +140,26 @@ body {
   height: 1px;
 }
 
+.overlay-action {
+  position: absolute;
+  top: -34px;
+  right: 0;
+  width: 28px;
+  height: 28px;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #3366ff;
+  border-radius: 6px;
+  background: #fff;
+  color: #3366ff;
+  cursor: pointer;
+  pointer-events: auto; /* the overlay itself ignores the mouse */
+}
+.overlay-action[hidden] { display: none; }
+.overlay-action svg { width: 16px; height: 16px; display: block; }
+.overlay-action.is-editing { background: #3366ff; color: #fff; }
 
 .resize-handle {
   position: absolute;
