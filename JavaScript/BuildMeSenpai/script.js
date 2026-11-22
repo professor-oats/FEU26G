@@ -3758,7 +3758,7 @@ function fft(re, im) {
 function analyzeBuffer(buffer, B, fmin, fmax, opts = {}) {
   const N = 2048;
   const MAX_SECONDS = 30;
-  const DB_RANGE = 45;
+  const DB_RANGE = 40;
   const GATE = 20; // out of 255: weaker cells become silence
 
   const sr = buffer.sampleRate;
@@ -3867,9 +3867,25 @@ function analyzeBuffer(buffer, B, fmin, fmax, opts = {}) {
     }
   }
 
+  // Per-band floor: the level a band sits at 40% of the time is background.
+  const floors = new Float32Array(B);
+
+  for (let b = 0; b < B; b++) {
+    const col = [];
+    for (let f = 0; f < F; f++) col.push(db[f * B + b]);
+    col.sort((x, y) => x - y);
+    floors[b] = col[Math.floor(col.length * 0.4)];
+  }
+
   const bytes = new Uint8Array(F * B);
+
   for (let i = 0; i < bytes.length; i++) {
-    const v = Math.round(Math.min(1, Math.max(0, (db[i] - (maxDb - DB_RANGE)) / DB_RANGE)) * 255);
+    const b = i % B;
+    const low = Math.max(floors[b], maxDb - DB_RANGE);
+    const norm = Math.min(1, Math.max(0, (db[i] - low) / Math.max(1, maxDb - low)));
+
+    // The power curve keeps loud hits bright and pushes tails down.
+    const v = Math.round(Math.pow(norm, 1.4) * 255);
     bytes[i] = v < GATE ? 0 : v;
   }
 
