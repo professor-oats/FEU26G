@@ -3629,9 +3629,13 @@ function playPattern(p, o, onProgress, onEnd) {
   var bandQ = Math.sqrt(bandRatio) / (bandRatio - 1);
 
   var curves = [], freqs = [];
+  var drum = wave === "drum";
+
   for (var b = 0; b < B; b++) {
     var freq = p.fmin * Math.pow(bandRatio, b);
     var gain = bass && freq < 200 ? 1.6 : 1;
+    if (drum && freq < 160) gain *= 0.25; // the kick voice carries the low end
+
     var c = new Float32Array(F), any = false;
     for (var f = 0; f < F; f++) {
       var v = p.bytes[f * B + b] / 255;
@@ -3642,7 +3646,96 @@ function playPattern(p, o, onProgress, onEnd) {
     curves.push(any ? c : null);
   }
 
+  // ---- Kick detection (Drum mode): onsets in the bands below 160 Hz ----
+  var kicks = [];
+
+  if (drum) {
+    var low = [];
+    for (var lb = 0; lb < B; lb++) if (freqs[lb] < 160) low.push(lb);
+
+    var peak = function (f) {
+      var m = 0, who = low[0];
+      for (var i = 0; i < low.length; i++) {
+        var val = p.bytes[f * B + low[i]] / 255;
+        if (val > m) { m = val; who = low[i]; }
+      }
+      return { level: m, band: who };
+    };
+
+    var gapFrames = Math.ceil(0.09 / (p.duration / F));
+    var lastKick = -gapFrames;
+    var prev = 0;
+
+    for (var kf = 0; kf < F && low.length; kf++) {
+      var cur = peak(kf);
+
+      if (cur.level >= 0.3 && cur.level - prev >= 0.15 && kf - lastKick >= gapFrames) {
+        // The loudest band may peak one frame later.
+        var next = kf + 1 < F ? peak(kf + 1) : cur;
+        var band = next.level > cur.level ? next.band : cur.band;
+
+        kicks.push({
+          pos: kf / F,
+          vel: Math.min(1, Math.max(cur.level, next.level) * 1.2),
+          f0: Math.min(90, Math.max(42, freqs[band]))
+        });
+        lastKick = kf;
+      }
+      prev = cur.level;
+    }
+  }
+
   var nodes = [], t0 = 0, raf = 0, stopped = false;
+
+  function playKick(k) {
+    var t = t0 + k.pos * dur;
+    var start = Math.min(260, k.f0 * 3);
+
+    // Body: a sine that falls from start to f0.
+    var osc = ac.createOscillator(), og = ac.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(start, t);
+    osc.frequency.exponentialRampToValueAtTime(k.f0, t + 0.09);
+
+    og.gain.setValueAtTime(0.0001, t);
+    og.gain.linearRampToValueAtTime(k.vel, t + 0.004);
+    og.gain.exponentialRampToValueAtTime(0.001, t + 0.28);
+
+    osc.connect(og);
+    og.connect(master);
+    osc.start(t);
+    osc.stop(t + 0.32);
+    nodes.push(osc);
+
+    // Optional second harmonic for small speakers: delete this block to drop it.
+    if (bass) {
+      var h = ac.createOscillator(), hg = ac.createGain();
+      h.type = "sine";
+      h.frequency.setValueAtTime(start * 2, t);
+      h.frequency.exponentialRampToValueAtTime(k.f0 * 2, t + 0.09);
+      hg.gain.setValueAtTime(k.vel * 0.25, t);
+      hg.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+      h.connect(hg);
+      hg.connect(master);
+      h.start(t);
+      h.stop(t + 0.16);
+      nodes.push(h);
+    }
+
+    // Click: a very short, high-passed noise burst.
+    var cs = ac.createBufferSource(), hp = ac.createBiquadFilter(), cg = ac.createGain();
+    cs.buffer = noiseBuf;
+    hp.type = "highpass";
+    hp.frequency.value = 1500;
+    cg.gain.setValueAtTime(k.vel * 0.35, t);
+    cg.gain.exponentialRampToValueAtTime(0.001, t + 0.015);
+    cs.connect(hp);
+    hp.connect(cg);
+    cg.connect(master);
+    cs.start(t);
+    cs.stop(t + 0.03);
+    nodes.push(cs);
+  }
 
   function run() {
     t0 = ac.currentTime + 0.08;
@@ -3661,8 +3754,9 @@ function playPattern(p, o, onProgress, onEnd) {
         src.frequency.value = freq;
         src.connect(g);
 
-        // Second harmonic so low notes are audible on small speakers.
-        if (bass && freq < 120) {
+        // Second harmonic for low sustained notes (not used in Drum mode,
+        // where the kick voice has its own).
+        if (bass && !drum && freq < 120) {
           var h = ac.createOscillator(), hg = ac.createGain();
           h.type = "sine";
           h.frequency.value = freq * 2;
@@ -3693,6 +3787,9 @@ function playPattern(p, o, onProgress, onEnd) {
       src.stop(t0 + dur + 0.05);
       nodes.push(src);
     }
+
+    for (var i = 0; i < kicks.length; i++) playKick(kicks[i]);
+    if (drum) console.log("kicks found:", kicks.length, kicks.map(function (k) { return Math.round(k.f0); }));
   }
 
   function finish() {
@@ -3874,7 +3971,7 @@ function analyzeBuffer(buffer, B, fmin, fmax, opts = {}) {
   const binHz = sr / N;
 
   // Bass boost: low bands use a long window for finer frequency resolution.
-  const NL = 8192;
+  const NL = 4096;
   const LOW_EDGE = 250;
   const reL = new Float32Array(NL);
   const imL = new Float32Array(NL);
@@ -3978,7 +4075,7 @@ function analyzeBuffer(buffer, B, fmin, fmax, opts = {}) {
   if (opts.bass) {
     for (let b = 0; b < B; b++) {
       const fc = fmin * Math.pow(ratio, b / (B - 1));
-      const g = 1 + 0.9 * Math.min(1, Math.max(0, (220 - fc) / 170));
+      const g = 1 + 0.9 * Math.min(1, Math.max(0, (250 - fc) / 130));
       if (g === 1) continue;
       for (let f = 0; f < F; f++) norm[f * B + b] = Math.min(1, norm[f * B + b] * g);
     }
@@ -3989,10 +4086,15 @@ function analyzeBuffer(buffer, B, fmin, fmax, opts = {}) {
     const out = new Float32Array(norm.length);
 
     for (let b = 0; b < B; b++) {
+      const fc = fmin * Math.pow(ratio, b / (B - 1));
+
       for (let f = 0; f < F; f++) {
         const cur = norm[f * B + b];
         const prev = f ? norm[(f - 1) * B + b] : 0;
-        out[f * B + b] = Math.min(1, cur * 0.6 + Math.max(0, cur - prev) * 1.4);
+
+        out[f * B + b] = fc < 160
+          ? cur // kicks keep their weight
+          : Math.min(1, cur * 0.8 + Math.max(0, cur - prev));
       }
     }
 
@@ -4039,7 +4141,7 @@ function applyEnvelope(p, tight = false) {
 
   for (let b = 0; b < B; b++) {
     const freq = p.fmin * Math.pow(bandRatio, b);
-    const rel = tight ? (freq < 160 ? 0.18 : 0.06) : 0.25;
+    const rel = tight ? (freq < 160 ? 0.08 : 0.025) : 0.1;
     const atk = tight ? 0.004 : 0.02;
     const attack = 1 - Math.exp(-dt / atk);
     const release = Math.exp(-dt / rel);
