@@ -2731,16 +2731,19 @@ function beginAudioDraft(event) {
     ["spectrogram", "Spectrogram + playhead"],
     ["bars", "Live frequency bars"]
   ]);
+
   const loopInput = make("input", { type: "checkbox" });
 
   const detailSelect = makeSelect([
     ["8", "Light (8 frames/s)"],
     ["16", "Standard (16 frames/s)"],
-    ["24", "Fine (24 frames/s)"]
+    ["24", "Fine (24 frames/s)"],
+    ["48", "Very fine (48 frames/s, short loops)"]
   ]);
   detailSelect.value = "16";
 
   const trimInput = make("input", { type: "checkbox", checked: true });
+  const noiseInput = make("input", { type: "checkbox" });
   const envInput = make("input", { type: "checkbox" });
   const sawInput = make("input", { type: "checkbox" });
 
@@ -2877,7 +2880,7 @@ function beginAudioDraft(event) {
 
     stopPreview = playPattern(
       getPatternBytes(pattern),
-      { loop: loopInput.checked, speed: speed(), wave: sawInput.checked ? "sawtooth" : "sine" },
+      { loop: loopInput.checked, speed: speed(), wave: noiseInput.checked ? "noise" : sawInput.checked ? "sawtooth" : "sine" },
       redraw,
       () => {
         stopPreview = null;
@@ -2906,7 +2909,7 @@ function beginAudioDraft(event) {
       color: colorInput.value,
       mode: modeSelect.value,
       speed: speed(),
-      wave: sawInput.checked ? "sawtooth" : "sine",
+      wave: noiseInput.checked ? "noise" : sawInput.checked ? "sawtooth" : "sine",
       loop: loopInput.checked,
       pattern
     };
@@ -2934,6 +2937,7 @@ function beginAudioDraft(event) {
     speedLabel,
     labelled("Envelope (smooth attack / release)", envInput),
     labelled("Sawtooth waveform", sawInput),
+    labelled("Noise bands (drums / percussion)", noiseInput),
     labelled("Min Hz", fminInput),
     labelled("Max Hz", fmaxInput),
     labelled("Pattern color", colorInput),
@@ -3576,14 +3580,23 @@ function playPattern(p, o, onProgress, onEnd) {
   if (ac.state === "suspended") ac.resume();
 
   var speed = Math.min(4, Math.max(0.25, o.speed || 1));
-  var wave = o.wave === "sawtooth" ? "sawtooth" : "sine";
+  var wave = (o.wave === "sawtooth" || o.wave === "noise") ? o.wave : "sine";
   var F = p.frames, B = p.bands, dur = p.duration / speed;
 
   var comp = ac.createDynamicsCompressor();
   var master = ac.createGain();
-  master.gain.value = wave === "sawtooth" ? 0.12 : 0.25; // saws are louder
+  master.gain.value = wave === "sawtooth" ? 0.12 : wave === "noise" ? 0.6 : 0.25;
   master.connect(comp);
   comp.connect(ac.destination);
+
+  var noiseBuf = null;
+  if (wave === "noise") {
+    noiseBuf = ac.createBuffer(1, ac.sampleRate * 2, ac.sampleRate);
+    var nd = noiseBuf.getChannelData(0);
+    for (var n = 0; n < nd.length; n++) nd[n] = Math.random() * 2 - 1;
+  }
+  var bandRatio = Math.pow(p.fmax / p.fmin, 1 / (B - 1));
+  var bandQ = Math.sqrt(bandRatio) / (bandRatio - 1);
 
   var curves = [];
   for (var b = 0; b < B; b++) {
@@ -3602,17 +3615,33 @@ function playPattern(p, o, onProgress, onEnd) {
     t0 = ac.currentTime + 0.08;
     for (var b = 0; b < B; b++) {
       if (!curves[b]) continue;
-      var osc = ac.createOscillator(), g = ac.createGain();
-      osc.type = wave;
-      osc.frequency.value = p.fmin * Math.pow(p.fmax / p.fmin, b / (B - 1));
+      var g = ac.createGain();
+      var src;
+
+      if (wave === "noise") {
+        src = ac.createBufferSource();
+        src.buffer = noiseBuf;
+        src.loop = true;
+        var bp = ac.createBiquadFilter();
+        bp.type = "bandpass";
+        bp.frequency.value = p.fmin * Math.pow(bandRatio, b);
+        bp.Q.value = bandQ;
+        src.connect(bp);
+        bp.connect(g);
+      } else {
+        src = ac.createOscillator();
+        src.type = wave;
+        src.frequency.value = p.fmin * Math.pow(bandRatio, b);
+        src.connect(g);
+      }
+
       g.gain.setValueAtTime(0, ac.currentTime);
       g.gain.setValueCurveAtTime(curves[b], t0, dur);
       g.gain.setValueAtTime(0, t0 + dur + 0.005);
-      osc.connect(g);
       g.connect(master);
-      osc.start(t0);
-      osc.stop(t0 + dur + 0.05);
-      nodes.push(osc);
+      src.start(t0);
+      src.stop(t0 + dur + 0.05);
+      nodes.push(src);
     }
   }
 
@@ -3729,6 +3758,9 @@ function fft(re, im) {
 function analyzeBuffer(buffer, B, fmin, fmax, opts = {}) {
   const N = 2048;
   const MAX_SECONDS = 30;
+  const DB_RANGE = 45;
+  const GATE = 20; // out of 255: weaker cells become silence
+
   const sr = buffer.sampleRate;
   const length = Math.min(buffer.length, Math.ceil(120 * sr));
   const top = Math.min(fmax, (sr / 2) * 0.98);
@@ -3779,6 +3811,8 @@ function analyzeBuffer(buffer, B, fmin, fmax, opts = {}) {
   const dur = span / sr;
   const fps = Number(opts.fps) || 16;
   const F = Math.min(MAX_PATTERN_FRAMES, Math.max(16, Math.round(dur * fps)));
+  const hop = span / F;
+  const S = Math.min(4, Math.max(1, Math.ceil(hop / (N / 2)))); // windows per frame
 
   const win = Float32Array.from(
     { length: N },
@@ -3787,42 +3821,56 @@ function analyzeBuffer(buffer, B, fmin, fmax, opts = {}) {
 
   const re = new Float32Array(N);
   const im = new Float32Array(N);
-  const db = new Float32Array(F * B);
   const binHz = sr / N;
+
+  // Bin range per band, computed once.
+  const ranges = [];
+  for (let b = 0; b < B; b++) {
+    const lo = fmin * Math.pow(ratio, (b - 0.5) / (B - 1));
+    const hi = fmin * Math.pow(ratio, (b + 0.5) / (B - 1));
+    const k0 = Math.max(1, Math.round(lo / binHz));
+    const k1 = Math.min(N / 2 - 1, Math.max(k0, Math.round(hi / binHz)));
+    ranges.push([k0, k1]);
+  }
+
+  const db = new Float32Array(F * B).fill(-200);
   let maxDb = -Infinity;
 
   for (let f = 0; f < F; f++) {
-    const center = start + Math.floor(((f + 0.5) / F) * span);
-    const from = center - N / 2;
+    for (let s = 0; s < S; s++) {
+      const center = start + Math.floor((f + (s + 0.5) / S) * hop);
+      const from = center - N / 2;
 
-    for (let i = 0; i < N; i++) {
-      const idx = from + i;
-      re[i] = idx >= 0 && idx < length ? mono[idx] * win[i] : 0;
-      im[i] = 0;
-    }
+      for (let i = 0; i < N; i++) {
+        const idx = from + i;
+        re[i] = idx >= 0 && idx < length ? mono[idx] * win[i] : 0;
+        im[i] = 0;
+      }
 
-    fft(re, im);
+      fft(re, im);
 
-    for (let b = 0; b < B; b++) {
-      const lo = fmin * Math.pow(ratio, (b - 0.5) / (B - 1));
-      const hi = fmin * Math.pow(ratio, (b + 0.5) / (B - 1));
-      const k0 = Math.max(1, Math.round(lo / binHz));
-      const k1 = Math.min(N / 2 - 1, Math.max(k0, Math.round(hi / binHz)));
+      for (let b = 0; b < B; b++) {
+        const [k0, k1] = ranges[b];
 
-      let m = 0;
-      for (let k = k0; k <= k1; k++) m = Math.max(m, Math.hypot(re[k], im[k]));
+        // Mean power in the band: noise no longer wins by having more bins.
+        let power = 0;
+        for (let k = k0; k <= k1; k++) power += re[k] * re[k] + im[k] * im[k];
+        const amp = (Math.sqrt(power / (k1 - k0 + 1)) / N) * 2;
 
-      const fc = fmin * Math.pow(ratio, b / (B - 1));
-      const v = 20 * Math.log10((m / N) * 2 + 1e-9) + 3 * Math.log2(fc / fmin);
+        const fc = fmin * Math.pow(ratio, b / (B - 1));
+        const v = 20 * Math.log10(amp + 1e-9) + 3 * Math.log2(fc / fmin);
 
-      db[f * B + b] = v;
-      if (v > maxDb) maxDb = v;
+        // The loudest window of the frame wins, so transients are kept.
+        if (v > db[f * B + b]) db[f * B + b] = v;
+        if (v > maxDb) maxDb = v;
+      }
     }
   }
 
   const bytes = new Uint8Array(F * B);
   for (let i = 0; i < bytes.length; i++) {
-    bytes[i] = Math.round(Math.min(1, Math.max(0, (db[i] - (maxDb - 60)) / 60)) * 255);
+    const v = Math.round(Math.min(1, Math.max(0, (db[i] - (maxDb - DB_RANGE)) / DB_RANGE)) * 255);
+    bytes[i] = v < GATE ? 0 : v;
   }
 
   return finishPattern(bytes, F, B, Math.max(0.5, dur), fmin, top);
@@ -5399,7 +5447,7 @@ function sanitizeAudio(element) {
     color: AUDIO_HEX_RE.test(element.color) ? element.color : "#33ccff",
     mode: element.mode === "bars" ? "bars" : "spectrogram",
     speed: clamp(element.speed, 0.25, 4, 1),
-    wave: element.wave === "sawtooth" ? "sawtooth" : "sine",
+    wave: ["sawtooth", "noise"].includes(element.wave) ? element.wave : "sine",
     loop: element.loop === true,
     pattern: { frames, bands, duration: clamp(p.duration, 0.5, 60, 6), fmin, fmax, data }
   };
@@ -5740,7 +5788,7 @@ function buildElementHtml(data) {
       mode: data.mode === "bars" ? "bars" : "spectrogram",
       loop: data.loop === true,
       speed: Math.min(4, Math.max(0.25, Number(data.speed) || 1)),
-      wave: data.wave === "sawtooth" ? "sawtooth" : "sine"
+      wave: ["sawtooth", "noise"].includes(element.wave) ? element.wave : "sine"
     };
 
     const bg = safePaint(data.background, "#0b1020");
