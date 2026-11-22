@@ -2683,7 +2683,9 @@ function beginAudioDraft(event) {
   if (activeAudioDraft || activeParagraphDraft || activeButtonDraft) return;
 
   const rect = canvas.getBoundingClientRect();
-  let pattern = null;
+  let base = null;     // as analyzed or built
+  let pattern = null;  // base, with the envelope applied if ticked
+  const frameCache = {};
   let stopPreview = null;
 
   const make = (tag, props = {}) => Object.assign(document.createElement(tag), props);
@@ -2731,6 +2733,25 @@ function beginAudioDraft(event) {
   ]);
   const loopInput = make("input", { type: "checkbox" });
 
+  const detailSelect = makeSelect([
+    ["8", "Light (8 frames/s)"],
+    ["16", "Standard (16 frames/s)"],
+    ["24", "Fine (24 frames/s)"]
+  ]);
+  detailSelect.value = "16";
+
+  const trimInput = make("input", { type: "checkbox", checked: true });
+  const envInput = make("input", { type: "checkbox" });
+  const sawInput = make("input", { type: "checkbox" });
+
+  const speedInput = make("input", { type: "range", min: 0.25, max: 4, step: 0.05, value: 1 });
+  const speedOut = make("span", { textContent: " 1.00x" });
+  const speedLabel = labelled("Playback speed", speedInput);
+  speedLabel.append(speedOut);
+
+  const detailLabel = labelled("Detail (file only)", detailSelect);
+  const trimLabel = labelled("Trim silence (file only)", trimInput);
+
   const analyzeButton = make("button", { type: "button", textContent: "Analyze / build" });
   const previewButton = make("button", { type: "button", textContent: "▶ Preview" });
   const status = make("div", { className: "button-hint" });
@@ -2747,6 +2768,8 @@ function beginAudioDraft(event) {
     rawLabel.hidden = source.value !== "raw";
     drawingLabel.hidden = source.value !== "drawing";
     secondsLabel.hidden = source.value === "file";
+    detailLabel.hidden = source.value !== "file";
+    trimLabel.hidden = source.value !== "file";
   }
 
   const redraw = (progress = -1) => {
@@ -2762,9 +2785,27 @@ function beginAudioDraft(event) {
       color: colorInput.value,
       bg: "",
       progress,
-      mode: modeSelect.value
+      mode: modeSelect.value,
+      cache: frameCache
     });
   };
+
+  const speed = () => Number(speedInput.value) || 1;
+
+  function updateStatus() {
+    if (!pattern) return;
+    status.textContent =
+      `Ready: ${(pattern.duration / speed()).toFixed(1)} s playback ` +
+      `(source ${pattern.duration.toFixed(1)} s), ${pattern.frames} x ${pattern.bands}, ` +
+      `${Math.round(pattern.fmin)}-${Math.round(pattern.fmax)} Hz, ` +
+      `${(pattern.data.length / 1024).toFixed(1)} KB`;
+  }
+
+  function refreshPattern() {
+    pattern = base ? (envInput.checked ? applyEnvelope(base) : base) : null;
+    updateStatus();
+    redraw();
+  }
 
   async function build() {
     stopPreview?.();
@@ -2783,23 +2824,23 @@ function beginAudioDraft(event) {
       if (source.value === "file") {
         const file = fileInput.files[0];
         if (!file) throw new Error("Choose an audio file first.");
-        pattern = await analyzeAudioFile(file, bands, fmin, fmax);
-      } else if (source.value === "raw") {
-        pattern = patternFromText(rawArea.value, bands, seconds, fmin, fmax);
-      } else {
-        pattern = patternFromDrawing(drawingSelect.value, bands, seconds, fmin, fmax);
-      }
 
-      status.textContent =
-        `Ready: ${pattern.duration.toFixed(1)} s, ${pattern.frames} x ${pattern.bands}, ` +
-        `${Math.round(pattern.fmin)}-${Math.round(pattern.fmax)} Hz`;
+        base = await analyzeAudioFile(file, bands, fmin, fmax, {
+          fps: Number(detailSelect.value),
+          trim: trimInput.checked
+        });
+      } else if (source.value === "raw") {
+        base = patternFromText(rawArea.value, bands, seconds, fmin, fmax);
+      } else {
+        base = patternFromDrawing(drawingSelect.value, bands, seconds, fmin, fmax);
+      }
     } catch (err) {
-      pattern = null;
+      base = null;
       status.textContent = "";
       error.textContent = err.message;
     } finally {
       analyzeButton.disabled = false;
-      redraw();
+      refreshPattern();
     }
   }
 
@@ -2817,6 +2858,13 @@ function beginAudioDraft(event) {
     control.addEventListener("change", () => redraw());
   });
 
+  envInput.addEventListener("change", refreshPattern);
+
+  speedInput.addEventListener("input", () => {
+    speedOut.textContent = ` ${speed().toFixed(2)}x`;
+    updateStatus();
+  });
+
   previewButton.addEventListener("click", () => {
     if (stopPreview) { stopPreview(); return; }
 
@@ -2829,7 +2877,7 @@ function beginAudioDraft(event) {
 
     stopPreview = playPattern(
       getPatternBytes(pattern),
-      { loop: loopInput.checked },
+      { loop: loopInput.checked, speed: speed(), wave: sawInput.checked ? "sawtooth" : "sine" },
       redraw,
       () => {
         stopPreview = null;
@@ -2857,6 +2905,8 @@ function beginAudioDraft(event) {
       background: bgInput.value,
       color: colorInput.value,
       mode: modeSelect.value,
+      speed: speed(),
+      wave: sawInput.checked ? "sawtooth" : "sine",
       loop: loopInput.checked,
       pattern
     };
@@ -2879,6 +2929,11 @@ function beginAudioDraft(event) {
     drawingLabel,
     secondsLabel,
     labelled("Bands", bandsSelect),
+    detailLabel,
+    trimLabel,
+    speedLabel,
+    labelled("Envelope (smooth attack / release)", envInput),
+    labelled("Sawtooth waveform", sawInput),
     labelled("Min Hz", fminInput),
     labelled("Max Hz", fmaxInput),
     labelled("Pattern color", colorInput),
@@ -3439,13 +3494,25 @@ syncPenVisibility();
 AUDIO PROCESSING SELF CONTAINED RUNTIME FUNCTIONS
  */
 
-function bytesFromB64(b64) {
-  var s = atob(b64), a = new Uint8Array(s.length);
-  for (var i = 0; i < s.length; i++) a[i] = s.charCodeAt(i);
+function bytesFromB64(b64, n) {
+  var s = atob(b64), a, i;
+
+  // Fewer bytes than cells means two 4-bit cells per byte.
+  if (n && s.length < n) {
+    a = new Uint8Array(n);
+    for (i = 0; i < n; i++) {
+      var c = s.charCodeAt(i >> 1);
+      a[i] = ((i & 1) ? (c & 15) : (c >> 4)) * 17;
+    }
+    return a;
+  }
+
+  a = new Uint8Array(s.length);
+  for (i = 0; i < s.length; i++) a[i] = s.charCodeAt(i);
   return a;
 }
 
-// p = { frames, bands, bytes }, o = { color, bg, progress (-1 = idle), mode }
+// p = { frames, bands, bytes }, o = { color, bg, progress (-1 = idle), mode, cache }
 function drawPattern(ctx, w, h, p, o) {
   ctx.clearRect(0, 0, w, h);
   if (o.bg) { ctx.fillStyle = o.bg; ctx.fillRect(0, 0, w, h); }
@@ -3453,24 +3520,42 @@ function drawPattern(ctx, w, h, p, o) {
   var F = p.frames, B = p.bands, cw = w / F, ch = h / B;
   var cur = o.progress >= 0 ? Math.min(F - 1, Math.floor(o.progress * F)) : -1;
 
-  ctx.fillStyle = o.color;
+  function cells(c) {
+    c.fillStyle = o.color;
+    for (var f = 0; f < F; f++) {
+      for (var k = 0; k < B; k++) {
+        var val = p.bytes[f * B + k];
+        if (!val) continue;
+        c.globalAlpha = val / 255;
+        c.fillRect(f * cw, (B - 1 - k) * ch, cw + 0.5, ch + 0.5);
+      }
+    }
+    c.globalAlpha = 1;
+  }
 
   if (o.mode === "bars" && cur >= 0) {
     var bw = w / B;
+    ctx.fillStyle = o.color;
     for (var b = 0; b < B; b++) {
       var v = p.bytes[cur * B + b] / 255;
       ctx.globalAlpha = 0.35 + 0.65 * v;
       ctx.fillRect(b * bw + 1, h - v * h, Math.max(1, bw - 2), v * h);
     }
   } else {
-    for (var f = 0; f < F; f++) {
-      for (var k = 0; k < B; k++) {
-        var val = p.bytes[f * B + k];
-        if (!val) continue;
-        ctx.globalAlpha = val / 255;
-        ctx.fillRect(f * cw, (B - 1 - k) * ch, cw + 0.5, ch + 0.5);
+    var cache = o.cache, key = w + "x" + h + o.color;
+
+    if (cache) {
+      if (cache.p !== p || cache.key !== key) {
+        var oc = document.createElement("canvas");
+        oc.width = w; oc.height = h;
+        cells(oc.getContext("2d"));
+        cache.cv = oc; cache.p = p; cache.key = key;
       }
+      ctx.drawImage(cache.cv, 0, 0);
+    } else {
+      cells(ctx);
     }
+
     if (cur >= 0) {
       ctx.globalAlpha = 0.9;
       ctx.fillStyle = "#ffffff";
@@ -3481,8 +3566,8 @@ function drawPattern(ctx, w, h, p, o) {
   ctx.globalAlpha = 1;
 }
 
-// Additive synthesis: one sine oscillator per active band.
-// Returns stop(). onProgress(0..1) runs every frame, onEnd() once.
+// Additive synthesis: one oscillator per active band.
+// o = { loop, speed, wave }. Returns stop().
 function playPattern(p, o, onProgress, onEnd) {
   var AC = window.AudioContext || window.webkitAudioContext;
   if (!AC) { if (onEnd) setTimeout(onEnd, 0); return function () {}; }
@@ -3490,10 +3575,13 @@ function playPattern(p, o, onProgress, onEnd) {
   var ac = new AC();
   if (ac.state === "suspended") ac.resume();
 
-  var F = p.frames, B = p.bands, dur = p.duration;
+  var speed = Math.min(4, Math.max(0.25, o.speed || 1));
+  var wave = o.wave === "sawtooth" ? "sawtooth" : "sine";
+  var F = p.frames, B = p.bands, dur = p.duration / speed;
+
   var comp = ac.createDynamicsCompressor();
   var master = ac.createGain();
-  master.gain.value = 0.25;
+  master.gain.value = wave === "sawtooth" ? 0.12 : 0.25; // saws are louder
   master.connect(comp);
   comp.connect(ac.destination);
 
@@ -3515,7 +3603,7 @@ function playPattern(p, o, onProgress, onEnd) {
     for (var b = 0; b < B; b++) {
       if (!curves[b]) continue;
       var osc = ac.createOscillator(), g = ac.createGain();
-      osc.type = "sine";
+      osc.type = wave;
       osc.frequency.value = p.fmin * Math.pow(p.fmax / p.fmin, b / (B - 1));
       g.gain.setValueAtTime(0, ac.currentTime);
       g.gain.setValueCurveAtTime(curves[b], t0, dur);
@@ -3560,6 +3648,7 @@ function playPattern(p, o, onProgress, onEnd) {
 // --------------------------------------------------
 
 const PATTERN_FRAMES = 128;
+const MAX_PATTERN_FRAMES = 720;
 const AUDIO_HEX_RE = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 const audioColor = (c) => (AUDIO_HEX_RE.test(c) ? c : "#33ccff");
 
@@ -3577,21 +3666,22 @@ const patternCache = new WeakMap();
 function getPatternBytes(pattern) {
   let p = patternCache.get(pattern);
   if (!p) {
-    p = { ...pattern, bytes: bytesFromB64(pattern.data) };
+    p = { ...pattern, bytes: bytesFromB64(pattern.data, pattern.frames * pattern.bands) };
     patternCache.set(pattern, p);
   }
   return p;
 }
 
-function finishPattern(bytes, bands, duration, fmin, fmax) {
-  return {
-    frames: PATTERN_FRAMES,
-    bands,
-    duration,
-    fmin,
-    fmax,
-    data: bytesToB64(bytes)
-  };
+function finishPattern(bytes, frames, bands, duration, fmin, fmax) {
+  const n = bytes.length;
+  const packed = new Uint8Array(Math.ceil(n / 2));
+
+  for (let i = 0; i < n; i++) {
+    const nib = Math.round(bytes[i] / 17); // 0..15
+    packed[i >> 1] |= i & 1 ? nib : nib << 4;
+  }
+
+  return { frames, bands, duration, fmin, fmax, data: bytesToB64(packed) };
 }
 
 function plotCell(bytes, B, f, b, v) {
@@ -3636,12 +3726,11 @@ function fft(re, im) {
   }
 }
 
-function analyzeBuffer(buffer, B, fmin, fmax) {
-  const F = PATTERN_FRAMES;
+function analyzeBuffer(buffer, B, fmin, fmax, opts = {}) {
   const N = 2048;
+  const MAX_SECONDS = 30;
   const sr = buffer.sampleRate;
-  const dur = Math.min(buffer.duration, 30);
-  const length = Math.min(buffer.length, Math.ceil(30 * sr));
+  const length = Math.min(buffer.length, Math.ceil(120 * sr));
   const top = Math.min(fmax, (sr / 2) * 0.98);
   const ratio = top / fmin;
 
@@ -3655,6 +3744,42 @@ function analyzeBuffer(buffer, B, fmin, fmax) {
     for (let i = 0; i < length; i++) mono[i] += data[i] / channels;
   }
 
+  // Region to analyze: optionally trim silence, then cap at 30 s.
+  let start = 0;
+  let end = length;
+
+  if (opts.trim) {
+    const block = 1024;
+    const rms = [];
+    let maxRms = 0;
+
+    for (let i = 0; i < length; i += block) {
+      let sum = 0;
+      const stop = Math.min(length, i + block);
+      for (let j = i; j < stop; j++) sum += mono[j] * mono[j];
+      const r = Math.sqrt(sum / (stop - i));
+      rms.push(r);
+      if (r > maxRms) maxRms = r;
+    }
+
+    const limit = maxRms * 0.03;
+    const first = rms.findIndex((r) => r > limit);
+    const last = rms.length - 1 - [...rms].reverse().findIndex((r) => r > limit);
+
+    if (maxRms > 0 && first !== -1) {
+      start = first * block;
+      end = Math.min(length, (last + 1) * block);
+    }
+  }
+
+  end = Math.min(end, start + MAX_SECONDS * sr);
+  if (end - start < sr * 0.5) { start = 0; end = Math.min(length, MAX_SECONDS * sr); }
+
+  const span = end - start;
+  const dur = span / sr;
+  const fps = Number(opts.fps) || 16;
+  const F = Math.min(MAX_PATTERN_FRAMES, Math.max(16, Math.round(dur * fps)));
+
   const win = Float32Array.from(
     { length: N },
     (_, i) => 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (N - 1))
@@ -3667,11 +3792,11 @@ function analyzeBuffer(buffer, B, fmin, fmax) {
   let maxDb = -Infinity;
 
   for (let f = 0; f < F; f++) {
-    const center = Math.floor(((f + 0.5) / F) * dur * sr);
-    const start = center - N / 2;
+    const center = start + Math.floor(((f + 0.5) / F) * span);
+    const from = center - N / 2;
 
     for (let i = 0; i < N; i++) {
-      const idx = start + i;
+      const idx = from + i;
       re[i] = idx >= 0 && idx < length ? mono[idx] * win[i] : 0;
       im[i] = 0;
     }
@@ -3687,7 +3812,6 @@ function analyzeBuffer(buffer, B, fmin, fmax) {
       let m = 0;
       for (let k = k0; k <= k1; k++) m = Math.max(m, Math.hypot(re[k], im[k]));
 
-      // Mild +3 dB/octave tilt so the high bands don't look empty.
       const fc = fmin * Math.pow(ratio, b / (B - 1));
       const v = 20 * Math.log10((m / N) * 2 + 1e-9) + 3 * Math.log2(fc / fmin);
 
@@ -3696,16 +3820,15 @@ function analyzeBuffer(buffer, B, fmin, fmax) {
     }
   }
 
-  // 60 dB window below the loudest cell maps to 0..255.
   const bytes = new Uint8Array(F * B);
   for (let i = 0; i < bytes.length; i++) {
     bytes[i] = Math.round(Math.min(1, Math.max(0, (db[i] - (maxDb - 60)) / 60)) * 255);
   }
 
-  return finishPattern(bytes, B, Math.max(1, dur), fmin, top);
+  return finishPattern(bytes, F, B, Math.max(0.5, dur), fmin, top);
 }
 
-async function analyzeAudioFile(file, B, fmin, fmax) {
+async function analyzeAudioFile(file, B, fmin, fmax, opts) {
   if (file.size > 25 * 1024 * 1024) throw new Error("The file is larger than 25 MB.");
 
   const AC = window.AudioContext || window.webkitAudioContext;
@@ -3713,7 +3836,7 @@ async function analyzeAudioFile(file, B, fmin, fmax) {
 
   try {
     const buffer = await ac.decodeAudioData(await file.arrayBuffer());
-    return analyzeBuffer(buffer, B, fmin, fmax);
+    return analyzeBuffer(buffer, B, fmin, fmax, opts);
   } catch (error) {
     if (error instanceof Error && !/decode/i.test(error.message) && error.name !== "EncodingError") {
       throw error;
@@ -3722,6 +3845,29 @@ async function analyzeAudioFile(file, B, fmin, fmax) {
   } finally {
     ac.close();
   }
+}
+
+// Fast attack, ~0.25 s release per band; faint flicker is cut to silence.
+function applyEnvelope(p) {
+  const F = p.frames, B = p.bands;
+  const src = bytesFromB64(p.data, F * B);
+  const out = new Uint8Array(F * B);
+
+  const dt = p.duration / F;
+  const attack = 1 - Math.exp(-dt / 0.02);
+  const release = Math.exp(-dt / 0.25);
+
+  for (let b = 0; b < B; b++) {
+    let y = 0;
+
+    for (let f = 0; f < F; f++) {
+      const x = src[f * B + b];
+      y = x > y ? y + (x - y) * attack : Math.max(x, y * release);
+      out[f * B + b] = y < 12 ? 0 : Math.round(y);
+    }
+  }
+
+  return finishPattern(out, F, B, p.duration, p.fmin, p.fmax);
 }
 
 // ---------- Series and paths -> pattern ----------
@@ -3757,7 +3903,7 @@ function patternFromSeries(values, B, seconds, fmin, fmax) {
     prev = b;
   }
 
-  return finishPattern(bytes, B, seconds, fmin, fmax);
+  return finishPattern(bytes, F, B, seconds, fmin, fmax);
 }
 
 // lines: [[ [x, y], ... ], ...]. x = time, y = pitch (up = higher).
@@ -3814,7 +3960,7 @@ function patternFromPolylines(lines, B, seconds, fmin, fmax) {
     }
   }
 
-  return finishPattern(bytes, B, seconds, fmin, fmax);
+  return finishPattern(bytes, F, B, seconds, fmin, fmax);
 }
 
 // SVG path data -> polylines. Supports M L H V C Q Z (absolute and relative).
@@ -5220,8 +5366,9 @@ function sanitizeAudio(element) {
   const clamp = (v, lo, hi, fallback) =>
     Number.isFinite(Number(v)) ? Math.min(Math.max(Number(v), lo), hi) : fallback;
 
+
   if (
-    !Number.isInteger(frames) || frames < 2 || frames > 512 ||
+    !Number.isInteger(frames) || frames < 2 || frames > 768 ||
     !Number.isInteger(bands) || bands < 2 || bands > 64
   ) {
     throw new Error("Audio pattern has an invalid size.");
@@ -5235,7 +5382,12 @@ function sanitizeAudio(element) {
 
   let length = -1;
   try { length = atob(data).length; } catch { /* stays -1 */ }
-  if (length !== frames * bands) throw new Error("Audio pattern data does not match its size.");
+
+  const cells = frames * bands;
+  // Either one byte per cell (older files) or two cells per byte.
+  if (length !== cells && length !== Math.ceil(cells / 2)) {
+    throw new Error("Audio pattern data does not match its size.");
+  }
 
   let fmin = clamp(p.fmin, 20, 20000, 110);
   let fmax = clamp(p.fmax, 20, 20000, 3520);
@@ -5246,6 +5398,8 @@ function sanitizeAudio(element) {
     background: safePaint(element.background, "#0b1020"),
     color: AUDIO_HEX_RE.test(element.color) ? element.color : "#33ccff",
     mode: element.mode === "bars" ? "bars" : "spectrogram",
+    speed: clamp(element.speed, 0.25, 4, 1),
+    wave: element.wave === "sawtooth" ? "sawtooth" : "sine",
     loop: element.loop === true,
     pattern: { frames, bands, duration: clamp(p.duration, 0.5, 60, 6), fmin, fmax, data }
   };
@@ -5584,7 +5738,9 @@ function buildElementHtml(data) {
       data: p.data,
       color: AUDIO_HEX_RE.test(data.color) ? data.color : "#33ccff",
       mode: data.mode === "bars" ? "bars" : "spectrogram",
-      loop: data.loop === true
+      loop: data.loop === true,
+      speed: Math.min(4, Math.max(0.25, Number(data.speed) || 1)),
+      wave: data.wave === "sawtooth" ? "sawtooth" : "sine"
     };
 
     const bg = safePaint(data.background, "#0b1020");
@@ -5638,19 +5794,20 @@ ${[bytesFromB64, drawPattern, playPattern].map((fn) => fn.toString()).join("\n")
     var ctx = cv.getContext("2d");
     var p = {
       frames: cfg.frames, bands: cfg.bands, duration: cfg.duration,
-      fmin: cfg.fmin, fmax: cfg.fmax, bytes: bytesFromB64(cfg.data)
+      fmin: cfg.fmin, fmax: cfg.fmax, bytes: bytesFromB64(cfg.data, cfg.frames * cfg.bands)
     };
+    var cache = {};
     var stop = null;
 
     function paint(t) {
       drawPattern(ctx, cv.width, cv.height, p,
-        { color: cfg.color, bg: "", progress: t, mode: cfg.mode });
+        { color: cfg.color, bg: "", progress: t, mode: cfg.mode, cache: cache });
     }
 
     function toggle() {
       if (stop) { stop(); return; }
       box.classList.add("playing");
-      stop = playPattern(p, { loop: cfg.loop }, paint, function () {
+      stop = playPattern(p, { loop: cfg.loop, speed: cfg.speed, wave: cfg.wave }, paint, function () {
         stop = null;
         box.classList.remove("playing");
         paint(-1);
