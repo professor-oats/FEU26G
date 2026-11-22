@@ -101,6 +101,14 @@ body {
   cursor: default;
 }
 
+.paragraph-draft {
+  cursor: default;
+}
+
+.paragraph-draft-toolbar {
+  cursor: default;
+}
+
 #selection-overlay {
   position: absolute;
   z-index: 2000;

@@ -2744,6 +2744,9 @@ function beginAudioDraft(event) {
 
   const trimInput = make("input", { type: "checkbox", checked: true });
   const noiseInput = make("input", { type: "checkbox" });
+  const bassInput = make("input", { type: "checkbox" });
+  const punchInput = make("input", { type: "checkbox" });
+  const drumInput = make("input", { type: "checkbox" });
   const envInput = make("input", { type: "checkbox" });
   const sawInput = make("input", { type: "checkbox" });
 
@@ -2805,10 +2808,20 @@ function beginAudioDraft(event) {
   }
 
   function refreshPattern() {
-    pattern = base ? (envInput.checked ? applyEnvelope(base) : base) : null;
+    pattern = base
+      ? (drumInput.checked ? applyEnvelope(base, true)
+        : envInput.checked ? applyEnvelope(base)
+          : base)
+      : null;
     updateStatus();
     redraw();
   }
+
+  const waveValue = () =>
+    drumInput.checked ? "drum"
+      : noiseInput.checked ? "noise"
+        : sawInput.checked ? "sawtooth"
+          : "sine";
 
   async function build() {
     stopPreview?.();
@@ -2830,7 +2843,9 @@ function beginAudioDraft(event) {
 
         base = await analyzeAudioFile(file, bands, fmin, fmax, {
           fps: Number(detailSelect.value),
-          trim: trimInput.checked
+          trim: trimInput.checked,
+          bass: bassInput.checked,
+          punch: punchInput.checked
         });
       } else if (source.value === "raw") {
         base = patternFromText(rawArea.value, bands, seconds, fmin, fmax);
@@ -2863,6 +2878,13 @@ function beginAudioDraft(event) {
 
   envInput.addEventListener("change", refreshPattern);
 
+  bassInput.addEventListener("change", () => {
+    if (bassInput.checked && Number(fminInput.value) > 60) fminInput.value = 40;
+    if (base) build();
+  });
+  punchInput.addEventListener("change", () => { if (base) build(); });
+  drumInput.addEventListener("change", refreshPattern);
+
   speedInput.addEventListener("input", () => {
     speedOut.textContent = ` ${speed().toFixed(2)}x`;
     updateStatus();
@@ -2880,7 +2902,7 @@ function beginAudioDraft(event) {
 
     stopPreview = playPattern(
       getPatternBytes(pattern),
-      { loop: loopInput.checked, speed: speed(), wave: noiseInput.checked ? "noise" : sawInput.checked ? "sawtooth" : "sine" },
+      { loop: loopInput.checked, speed: speed(), wave: waveValue(), bass: bassInput.checked },
       redraw,
       () => {
         stopPreview = null;
@@ -2909,7 +2931,8 @@ function beginAudioDraft(event) {
       color: colorInput.value,
       mode: modeSelect.value,
       speed: speed(),
-      wave: noiseInput.checked ? "noise" : sawInput.checked ? "sawtooth" : "sine",
+      wave: waveValue(),
+      bass: bassInput.checked,
       loop: loopInput.checked,
       pattern
     };
@@ -2938,6 +2961,9 @@ function beginAudioDraft(event) {
     labelled("Envelope (smooth attack / release)", envInput),
     labelled("Sawtooth waveform", sawInput),
     labelled("Noise bands (drums / percussion)", noiseInput),
+    labelled("Boost bass (long window + harmonics)", bassInput),
+    labelled("Punch (emphasize hits)", punchInput),
+    labelled("Drum mode (sine kick + noise rest, tight decay)", drumInput),
     labelled("Min Hz", fminInput),
     labelled("Max Hz", fmaxInput),
     labelled("Pattern color", colorInput),
@@ -3580,32 +3606,39 @@ function playPattern(p, o, onProgress, onEnd) {
   if (ac.state === "suspended") ac.resume();
 
   var speed = Math.min(4, Math.max(0.25, o.speed || 1));
-  var wave = (o.wave === "sawtooth" || o.wave === "noise") ? o.wave : "sine";
+  var wave = (o.wave === "sawtooth" || o.wave === "noise" || o.wave === "drum") ? o.wave : "sine";
+  var bass = o.bass === true;
   var F = p.frames, B = p.bands, dur = p.duration / speed;
 
   var comp = ac.createDynamicsCompressor();
   var master = ac.createGain();
-  master.gain.value = wave === "sawtooth" ? 0.12 : wave === "noise" ? 0.6 : 0.25;
+  master.gain.value =
+    (wave === "sawtooth" ? 0.12 : wave === "noise" ? 0.6 : wave === "drum" ? 0.45 : 0.25) *
+    (bass ? 0.8 : 1);
   master.connect(comp);
   comp.connect(ac.destination);
 
   var noiseBuf = null;
-  if (wave === "noise") {
+  if (wave === "noise" || wave === "drum") {
     noiseBuf = ac.createBuffer(1, ac.sampleRate * 2, ac.sampleRate);
     var nd = noiseBuf.getChannelData(0);
     for (var n = 0; n < nd.length; n++) nd[n] = Math.random() * 2 - 1;
   }
+
   var bandRatio = Math.pow(p.fmax / p.fmin, 1 / (B - 1));
   var bandQ = Math.sqrt(bandRatio) / (bandRatio - 1);
 
-  var curves = [];
+  var curves = [], freqs = [];
   for (var b = 0; b < B; b++) {
+    var freq = p.fmin * Math.pow(bandRatio, b);
+    var gain = bass && freq < 200 ? 1.6 : 1;
     var c = new Float32Array(F), any = false;
     for (var f = 0; f < F; f++) {
       var v = p.bytes[f * B + b] / 255;
-      c[f] = v;
+      c[f] = v * gain;
       if (v > 0) any = true;
     }
+    freqs.push(freq);
     curves.push(any ? c : null);
   }
 
@@ -3613,26 +3646,43 @@ function playPattern(p, o, onProgress, onEnd) {
 
   function run() {
     t0 = ac.currentTime + 0.08;
+
     for (var b = 0; b < B; b++) {
       if (!curves[b]) continue;
+
+      var freq = freqs[b];
+      var tonal = wave === "sine" || wave === "sawtooth" || (wave === "drum" && freq < 160);
       var g = ac.createGain();
       var src;
 
-      if (wave === "noise") {
+      if (tonal) {
+        src = ac.createOscillator();
+        src.type = wave === "sawtooth" ? "sawtooth" : "sine";
+        src.frequency.value = freq;
+        src.connect(g);
+
+        // Second harmonic so low notes are audible on small speakers.
+        if (bass && freq < 120) {
+          var h = ac.createOscillator(), hg = ac.createGain();
+          h.type = "sine";
+          h.frequency.value = freq * 2;
+          hg.gain.value = 0.35;
+          h.connect(hg);
+          hg.connect(g);
+          h.start(t0);
+          h.stop(t0 + dur + 0.05);
+          nodes.push(h);
+        }
+      } else {
         src = ac.createBufferSource();
         src.buffer = noiseBuf;
         src.loop = true;
         var bp = ac.createBiquadFilter();
         bp.type = "bandpass";
-        bp.frequency.value = p.fmin * Math.pow(bandRatio, b);
+        bp.frequency.value = freq;
         bp.Q.value = bandQ;
         src.connect(bp);
         bp.connect(g);
-      } else {
-        src = ac.createOscillator();
-        src.type = wave;
-        src.frequency.value = p.fmin * Math.pow(bandRatio, b);
-        src.connect(g);
       }
 
       g.gain.setValueAtTime(0, ac.currentTime);
@@ -3823,20 +3873,71 @@ function analyzeBuffer(buffer, B, fmin, fmax, opts = {}) {
   const im = new Float32Array(N);
   const binHz = sr / N;
 
-  // Bin range per band, computed once.
+  // Bass boost: low bands use a long window for finer frequency resolution.
+  const NL = 8192;
+  const LOW_EDGE = 250;
+  const reL = new Float32Array(NL);
+  const imL = new Float32Array(NL);
+  const winL = Float32Array.from(
+    { length: NL },
+    (_, i) => 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (NL - 1))
+  );
+  const binHzL = sr / NL;
+
   const ranges = [];
+  const isLow = [];
+
   for (let b = 0; b < B; b++) {
     const lo = fmin * Math.pow(ratio, (b - 0.5) / (B - 1));
     const hi = fmin * Math.pow(ratio, (b + 0.5) / (B - 1));
-    const k0 = Math.max(1, Math.round(lo / binHz));
-    const k1 = Math.min(N / 2 - 1, Math.max(k0, Math.round(hi / binHz)));
+    const low = Boolean(opts.bass) && hi <= LOW_EDGE;
+    const bin = low ? binHzL : binHz;
+    const kMax = (low ? NL : N) / 2 - 1;
+    const k0 = Math.max(1, Math.round(lo / bin));
+    const k1 = Math.min(kMax, Math.max(k0, Math.round(hi / bin)));
+
     ranges.push([k0, k1]);
+    isLow.push(low);
   }
 
+  const anyLow = isLow.some(Boolean);
   const db = new Float32Array(F * B).fill(-200);
   let maxDb = -Infinity;
 
+  const bandDb = (r, i2, size, b) => {
+    const [k0, k1] = ranges[b];
+    let power = 0;
+    for (let k = k0; k <= k1; k++) power += r[k] * r[k] + i2[k] * i2[k];
+
+    const amp = (Math.sqrt(power / (k1 - k0 + 1)) / size) * 2;
+    const fc = fmin * Math.pow(ratio, b / (B - 1));
+    return 20 * Math.log10(amp + 1e-9) + 3 * Math.log2(fc / fmin);
+  };
+
+  // The loudest window of a frame wins, so transients are kept.
+  const put = (f, b, v) => {
+    if (v > db[f * B + b]) db[f * B + b] = v;
+    if (v > maxDb) maxDb = v;
+  };
+
   for (let f = 0; f < F; f++) {
+    if (anyLow) {
+      const center = start + Math.floor((f + 0.5) * hop);
+      const from = center - NL / 2;
+
+      for (let i = 0; i < NL; i++) {
+        const idx = from + i;
+        reL[i] = idx >= 0 && idx < length ? mono[idx] * winL[i] : 0;
+        imL[i] = 0;
+      }
+
+      fft(reL, imL);
+
+      for (let b = 0; b < B; b++) {
+        if (isLow[b]) put(f, b, bandDb(reL, imL, NL, b));
+      }
+    }
+
     for (let s = 0; s < S; s++) {
       const center = start + Math.floor((f + (s + 0.5) / S) * hop);
       const from = center - N / 2;
@@ -3850,19 +3951,7 @@ function analyzeBuffer(buffer, B, fmin, fmax, opts = {}) {
       fft(re, im);
 
       for (let b = 0; b < B; b++) {
-        const [k0, k1] = ranges[b];
-
-        // Mean power in the band: noise no longer wins by having more bins.
-        let power = 0;
-        for (let k = k0; k <= k1; k++) power += re[k] * re[k] + im[k] * im[k];
-        const amp = (Math.sqrt(power / (k1 - k0 + 1)) / N) * 2;
-
-        const fc = fmin * Math.pow(ratio, b / (B - 1));
-        const v = 20 * Math.log10(amp + 1e-9) + 3 * Math.log2(fc / fmin);
-
-        // The loudest window of the frame wins, so transients are kept.
-        if (v > db[f * B + b]) db[f * B + b] = v;
-        if (v > maxDb) maxDb = v;
+        if (!isLow[b]) put(f, b, bandDb(re, im, N, b));
       }
     }
   }
@@ -3877,15 +3966,43 @@ function analyzeBuffer(buffer, B, fmin, fmax, opts = {}) {
     floors[b] = col[Math.floor(col.length * 0.4)];
   }
 
+  let norm = new Float32Array(F * B);
+
+  for (let i = 0; i < norm.length; i++) {
+    const b = i % B;
+    const low = Math.max(floors[b], maxDb - DB_RANGE);
+    norm[i] = Math.min(1, Math.max(0, (db[i] - low) / Math.max(1, maxDb - low)));
+  }
+
+  // Bass boost: linear gain after normalization, up to 1.9x below ~50 Hz.
+  if (opts.bass) {
+    for (let b = 0; b < B; b++) {
+      const fc = fmin * Math.pow(ratio, b / (B - 1));
+      const g = 1 + 0.9 * Math.min(1, Math.max(0, (220 - fc) / 170));
+      if (g === 1) continue;
+      for (let f = 0; f < F; f++) norm[f * B + b] = Math.min(1, norm[f * B + b] * g);
+    }
+  }
+
+  // Punch: keep the rise of each band, drop the tails.
+  if (opts.punch) {
+    const out = new Float32Array(norm.length);
+
+    for (let b = 0; b < B; b++) {
+      for (let f = 0; f < F; f++) {
+        const cur = norm[f * B + b];
+        const prev = f ? norm[(f - 1) * B + b] : 0;
+        out[f * B + b] = Math.min(1, cur * 0.6 + Math.max(0, cur - prev) * 1.4);
+      }
+    }
+
+    norm = out;
+  }
+
   const bytes = new Uint8Array(F * B);
 
   for (let i = 0; i < bytes.length; i++) {
-    const b = i % B;
-    const low = Math.max(floors[b], maxDb - DB_RANGE);
-    const norm = Math.min(1, Math.max(0, (db[i] - low) / Math.max(1, maxDb - low)));
-
-    // The power curve keeps loud hits bright and pushes tails down.
-    const v = Math.round(Math.pow(norm, 1.4) * 255);
+    const v = Math.round(Math.pow(norm[i], 1.4) * 255);
     bytes[i] = v < GATE ? 0 : v;
   }
 
@@ -3911,17 +4028,21 @@ async function analyzeAudioFile(file, B, fmin, fmax, opts) {
   }
 }
 
-// Fast attack, ~0.25 s release per band; faint flicker is cut to silence.
-function applyEnvelope(p) {
+// smooth: ~0.25 s release. tight: fast attack, 0.18 s release below 160 Hz,
+// 0.06 s above, so kicks ring a little and hats stay short.
+function applyEnvelope(p, tight = false) {
   const F = p.frames, B = p.bands;
   const src = bytesFromB64(p.data, F * B);
   const out = new Uint8Array(F * B);
-
   const dt = p.duration / F;
-  const attack = 1 - Math.exp(-dt / 0.02);
-  const release = Math.exp(-dt / 0.25);
+  const bandRatio = Math.pow(p.fmax / p.fmin, 1 / (B - 1));
 
   for (let b = 0; b < B; b++) {
+    const freq = p.fmin * Math.pow(bandRatio, b);
+    const rel = tight ? (freq < 160 ? 0.18 : 0.06) : 0.25;
+    const atk = tight ? 0.004 : 0.02;
+    const attack = 1 - Math.exp(-dt / atk);
+    const release = Math.exp(-dt / rel);
     let y = 0;
 
     for (let f = 0; f < F; f++) {
@@ -5463,7 +5584,8 @@ function sanitizeAudio(element) {
     color: AUDIO_HEX_RE.test(element.color) ? element.color : "#33ccff",
     mode: element.mode === "bars" ? "bars" : "spectrogram",
     speed: clamp(element.speed, 0.25, 4, 1),
-    wave: ["sawtooth", "noise"].includes(element.wave) ? element.wave : "sine",
+    wave: ["sawtooth", "noise", "drum"].includes(element.wave) ? element.wave : "sine",
+    bass: element.bass === true,
     loop: element.loop === true,
     pattern: { frames, bands, duration: clamp(p.duration, 0.5, 60, 6), fmin, fmax, data }
   };
@@ -5803,8 +5925,9 @@ function buildElementHtml(data) {
       color: AUDIO_HEX_RE.test(data.color) ? data.color : "#33ccff",
       mode: data.mode === "bars" ? "bars" : "spectrogram",
       loop: data.loop === true,
+      bass: data.bass === true,
       speed: Math.min(4, Math.max(0.25, Number(data.speed) || 1)),
-      wave: ["sawtooth", "noise"].includes(element.wave) ? element.wave : "sine"
+      wave: ["sawtooth", "noise", "drum"].includes(data.wave) ? data.wave : "sine",
     };
 
     const bg = safePaint(data.background, "#0b1020");
@@ -5871,7 +5994,7 @@ ${[bytesFromB64, drawPattern, playPattern].map((fn) => fn.toString()).join("\n")
     function toggle() {
       if (stop) { stop(); return; }
       box.classList.add("playing");
-      stop = playPattern(p, { loop: cfg.loop, speed: cfg.speed, wave: cfg.wave }, paint, function () {
+            stop = playPattern(p, { loop: cfg.loop, speed: cfg.speed, wave: cfg.wave, bass: cfg.bass }, paint, function () {
         stop = null;
         box.classList.remove("playing");
         paint(-1);
