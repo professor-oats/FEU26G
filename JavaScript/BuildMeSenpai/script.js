@@ -2757,6 +2757,7 @@ function beginAudioDraft(event) {
   const highSelect = makeSelect([
     ["noise", "Noise bands"], ["sine", "Sine bands"], ["saw", "Sawtooth bands"], ["off", "Off"]
   ]);
+  const snareSelect = makeSelect([["fit", "Snare (from detected hits)"], ["off", "Off"]]);
   const tightInput = make("input", { type: "checkbox", checked: true });
 
   const speedInput = make("input", { type: "range", min: 0.25, max: 4, step: 0.05, value: 1 });
@@ -2915,7 +2916,8 @@ function beginAudioDraft(event) {
 
     stopPreview = playPattern(
       getPatternBytes(pattern),
-      { loop: loopInput.checked, speed: speed(), low: lowSelect.value, high: highSelect.value, bass: bassInput.checked },
+      { loop: loopInput.checked, speed: speed(), low: lowSelect.value, high: highSelect.value,
+        snare: snareSelect.value, bass: bassInput.checked },
       redraw,
       () => {
         stopPreview = null;
@@ -2946,6 +2948,7 @@ function beginAudioDraft(event) {
       speed: speed(),
       low: lowSelect.value,
       high: highSelect.value,
+      snare: snareSelect.value,
       bass: bassInput.checked,
       loop: loopInput.checked,
       pattern
@@ -2976,6 +2979,7 @@ function beginAudioDraft(event) {
     labelled("Low layer (< 160 Hz)", lowSelect),
     labelled("High layer (> 160 Hz)", highSelect),
     labelled("Tight decay (percussion)", tightInput),
+    labelled("Snare", snareSelect),
     labelled("Boost bass (long window + harmonics)", bassInput),
     labelled("Punch (emphasize hits)", punchInput),
     //labelled("Drum mode (sine kick + noise rest, tight decay)", drumInput),
@@ -3631,6 +3635,7 @@ function playPattern(p, o, onProgress, onEnd) {
   }[o.wave || "sine"] || ["sine", "sine"];
   var lowV = o.low || legacy[0];
   var highV = o.high || legacy[1];
+  var snareOn = o.snare !== "off";
   var LOUD = { sine: 0.25, saw: 0.12, noise: 0.6, kick: 0.45, off: 0.25 };
 
   var comp = ac.createDynamicsCompressor();
@@ -3640,7 +3645,7 @@ function playPattern(p, o, onProgress, onEnd) {
   comp.connect(ac.destination);
 
   var noiseBuf = null;
-  if (lowV === "noise" || highV === "noise" || lowV === "kick") {
+  if (lowV === "noise" || highV === "noise" || lowV === "kick" || snareOn) {
     noiseBuf = ac.createBuffer(1, ac.sampleRate * 2, ac.sampleRate);
     var nd = noiseBuf.getChannelData(0);
     for (var n = 0; n < nd.length; n++) nd[n] = Math.random() * 2 - 1;
@@ -3648,7 +3653,12 @@ function playPattern(p, o, onProgress, onEnd) {
 
   var bandRatio = Math.pow(p.fmax / p.fmin, 1 / (B - 1));
   var bandQ = Math.sqrt(bandRatio) / (bandRatio - 1);
-  var hasEvents = lowV === "kick" && p.events && p.events.length > 0;
+  var hasEvents = false;
+  if (lowV === "kick" && p.events) {
+    for (var q = 0; q < p.events.length; q++) {
+      if (p.events[q][3] !== 1) { hasEvents = true; break; }
+    }
+  }
 
   var curves = [], freqs = [], voices = [];
   for (var b = 0; b < B; b++) {
@@ -3700,10 +3710,18 @@ function playPattern(p, o, onProgress, onEnd) {
   if (lowV === "kick") {
     if (hasEvents) {
       for (var e = 0; e < p.events.length; e++) {
+        if (p.events[e][3] === 1) continue;          // snares are not kicks
         kicks.push({ pos: p.events[e][0] / p.duration, f0: p.events[e][1], vel: p.events[e][2] });
       }
     } else {
       kicks = gridKicks();
+    }
+  }
+
+  var snares = [];
+  if (snareOn && p.events) {
+    for (var s = 0; s < p.events.length; s++) {
+      if (p.events[s][3] === 1) snares.push({ pos: p.events[s][0] / p.duration, vel: p.events[s][2] });
     }
   }
 
@@ -3760,6 +3778,47 @@ function playPattern(p, o, onProgress, onEnd) {
     nodes.push(cs);
   }
 
+  // Fitted to the target loop: noise in three bands (gains 1.0 / 2.0 / 1.5), 5 ms attack,
+  // peak at 20 ms, decay tau 50 ms, plus a quiet 140 Hz tone (tau 40 ms).
+  var SNARE_GAIN = 0.5;                              // tune by ear
+  var SNARE_BANDS = [[3500, 11000, 1.0], [300, 3500, 2.0], [60, 300, 1.5]];
+
+  function playSnare(sn) {
+    var t = t0 + sn.pos * dur;
+    var v = SNARE_GAIN * (0.4 + 0.6 * sn.vel);
+
+    var env = ac.createGain();
+    env.gain.setValueAtTime(0, t);
+    env.gain.linearRampToValueAtTime(0.6 * v, t + 0.005);
+    env.gain.linearRampToValueAtTime(v, t + 0.02);
+    env.gain.setTargetAtTime(0, t + 0.02, 0.05);
+    env.connect(master);
+
+    for (var k = 0; k < SNARE_BANDS.length; k++) {
+      var src = ac.createBufferSource();
+      src.buffer = noiseBuf;
+      var hp = ac.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = SNARE_BANDS[k][0]; hp.Q.value = 0.707;
+      var lp = ac.createBiquadFilter(); lp.type = "lowpass";  lp.frequency.value = SNARE_BANDS[k][1]; lp.Q.value = 0.707;
+      var bg = ac.createGain(); bg.gain.value = SNARE_BANDS[k][2];
+      src.connect(hp); hp.connect(lp); lp.connect(bg); bg.connect(env);
+      src.start(t, Math.random() * 1.5);
+      src.stop(t + 0.4);
+      nodes.push(src);
+    }
+
+    var osc = ac.createOscillator(), og = ac.createGain();
+    osc.type = "sine";
+    osc.frequency.value = 140;
+    og.gain.setValueAtTime(0, t);
+    og.gain.linearRampToValueAtTime(0.3 * v, t + 0.004);
+    og.gain.setTargetAtTime(0, t + 0.004, 0.04);
+    osc.connect(og);
+    og.connect(master);
+    osc.start(t);
+    osc.stop(t + 0.3);
+    nodes.push(osc);
+  }
+
   function run() {
     t0 = ac.currentTime + 0.08;
 
@@ -3808,6 +3867,7 @@ function playPattern(p, o, onProgress, onEnd) {
     }
 
     for (var i = 0; i < kicks.length; i++) playKick(kicks[i]);
+    for (var j = 0; j < snares.length; j++) playSnare(snares[j]);
   }
 
   function finish() {
@@ -4007,6 +4067,86 @@ function extractKickEvents(mono, sr, start, end) {
   }
 
   return events;
+}
+
+function highpassBiquad(x, sr, fc) {
+  const y = Float32Array.from(x);
+  for (const Q of [0.5412, 1.3066]) {          // 4th-order Butterworth
+    const w = 2 * Math.PI * fc / sr, c = Math.cos(w), al = Math.sin(w) / (2 * Q);
+    const a0 = 1 + al;
+    const b0 = (1 + c) / 2 / a0, b1 = -(1 + c) / a0, b2 = b0;
+    const a1 = -2 * c / a0, a2 = (1 - al) / a0;
+    let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+    for (let i = 0; i < y.length; i++) {
+      const xi = y[i];
+      const yi = b0 * xi + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+      x2 = x1; x1 = xi; y2 = y1; y1 = yi; y[i] = yi;
+    }
+  }
+  return y;
+}
+
+// Power in dB between lo and hi Hz over 2048 samples starting at sample i0 (uses your fft(re, im)).
+function bandDb(sig, sr, i0, lo, hi) {
+  const N = 4096, W = 2048;
+  const re = new Float32Array(N), im = new Float32Array(N);
+  for (let i = 0; i < W && i0 + i < sig.length; i++)
+    re[i] = sig[i0 + i] * (0.5 - 0.5 * Math.cos(2 * Math.PI * i / (W - 1)));
+  fft(re, im);
+  let p = 1e-12;
+  for (let k = 1; k < N / 2; k++) {
+    const hz = k * sr / N;
+    if (hz >= lo && hz < hi) p += re[k] * re[k] + im[k] * im[k];
+  }
+  return 10 * Math.log10(p);
+}
+
+// Returns [[seconds, 140, velocity 0..1, 1], ...] relative to `start` (the trailing 1 marks a snare).
+function extractSnareEvents(mono, sr, start, end) {
+  if (end - start < sr * 0.3) return [];
+  const seg = mono.subarray(start, end);
+  const hp = highpassBiquad(seg, sr, 3000);
+  const blk = Math.max(1, Math.round(sr * 0.002)), m = Math.floor(seg.length / blk);
+  const rh = new Float32Array(m);
+  let gmax = 0;
+  for (let j = 0; j < m; j++) {
+    let s = 0;
+    for (let i = j * blk; i < (j + 1) * blk; i++) s += hp[i] * hp[i];
+    rh[j] = Math.sqrt(s / blk);
+    if (rh[j] > gmax) gmax = rh[j];
+  }
+  if (gmax < 1e-4) return [];
+
+  const cand = [];
+  let last = -99;
+  for (let i = 10; i < m - 30; i++) {
+    let before = 0, after = 0;
+    for (let k = i - 10; k < i; k++) before += rh[k] / 10;
+    for (let k = i; k < i + 10; k++) after = Math.max(after, rh[k]);
+    if (after < 0.12 * gmax || after < 2.2 * (before + 1e-9) || i - last <= 20) continue;
+
+    let j = i;                                   // walk back to the 20% point
+    while (j > i - 6 && rh[j - 1] >= 0.2 * after) j--;
+    const s0 = j * blk;
+    const hi = bandDb(seg, sr, s0, 4000, 12000);
+    const mid = bandDb(seg, sr, s0, 200, 1500) - hi;
+    const low = bandDb(seg, sr, s0, 30, 150) - hi;
+    // Broadband gate, deliberately loose; the level gate below does the rest.
+    if (mid > -10 && low > -16 && low < -3 && cand.length < 256)
+      cand.push([Math.round(s0 / sr * 1000) / 1000, after]);
+    last = i;
+    i += 19;
+  }
+
+  // Level gate: keep hits at least half as loud as the loudest broadband hit
+  // (drops pre-hits and ghost transients that sit just under the spectral limits).
+  let top = 1e-9;
+  for (const e of cand) top = Math.max(top, e[1]);
+  const GHOST = 0.5;                              // lower to keep softer snares
+  return cand
+    .filter((e) => e[1] >= GHOST * top)
+    .slice(0, 128)
+    .map((e) => [e[0], 140, Math.round(Math.min(1, e[1] / top) * 100) / 100, 1]);
 }
 
 function analyzeBuffer(buffer, B, fmin, fmax, opts = {}) {
@@ -4215,7 +4355,9 @@ function analyzeBuffer(buffer, B, fmin, fmax, opts = {}) {
     bytes[i] = v < GATE ? 0 : v;
   }
 
-  const events = extractKickEvents(mono, sr, start, end);
+  const events = extractKickEvents(mono, sr, start, end)
+    .concat(extractSnareEvents(mono, sr, start, end))
+    .sort((a, b) => a[0] - b[0]);
   return finishPattern(bytes, F, B, Math.max(0.5, dur), fmin, top, events);
 }
 
@@ -5764,7 +5906,9 @@ function sanitizeAudio(element) {
   const events = (Array.isArray(p.events) ? p.events : [])
     .slice(0, 256)
     .filter((e) => Array.isArray(e) && e.length >= 3 && e.slice(0, 3).every(Number.isFinite))
-    .map((e) => [clamp(e[0], 0, 120, 0), clamp(e[1], 20, 200, 60), clamp(e[2], 0, 1, 1)]);
+    .map((e) => e[3] === 1
+      ? [clamp(e[0], 0, 120, 0), clamp(e[1], 20, 200, 140), clamp(e[2], 0, 1, 1), 1]
+      : [clamp(e[0], 0, 120, 0), clamp(e[1], 20, 200, 60), clamp(e[2], 0, 1, 1)]);
 
   if (
     !Number.isInteger(frames) || frames < 2 || frames > 768 ||
@@ -5801,6 +5945,7 @@ function sanitizeAudio(element) {
     wave: ["sawtooth", "noise", "drum"].includes(element.wave) ? element.wave : "sine",
     low: ["kick", "sine", "saw", "noise", "off"].includes(element.low) ? element.low : undefined,
     high: ["noise", "sine", "saw", "off"].includes(element.high) ? element.high : undefined,
+    snare: element.snare === "off" ? "off" : undefined,
     bass: element.bass === true,
     loop: element.loop === true,
     pattern: { frames, bands, duration: clamp(p.duration, 0.5, 60, 6), fmin, fmax, data, events }
@@ -6146,9 +6291,10 @@ function buildElementHtml(data) {
       wave: ["sawtooth", "noise", "drum"].includes(data.wave) ? data.wave : "sine",
       events: (Array.isArray(p.events) ? p.events : []).slice(0, 256)
         .filter((e) => Array.isArray(e) && e.slice(0, 3).every(Number.isFinite))
-        .map((e) => [e[0], e[1], e[2]]),
+        .map((e) => e[3] === 1 ? [e[0], e[1], e[2], 1] : [e[0], e[1], e[2]]),
       low: ["kick", "sine", "saw", "noise", "off"].includes(data.low) ? data.low : undefined,
       high: ["noise", "sine", "saw", "off"].includes(data.high) ? data.high : undefined,
+      snare: data.snare === "off" ? "off" : undefined
     };
 
     const bg = safePaint(data.background, "#0b1020");
@@ -6217,7 +6363,7 @@ ${[bytesFromB64, drawPattern, playPattern].map((fn) => fn.toString()).join("\n")
       if (stop) { stop(); return; }
       box.classList.add("playing");
       stop = playPattern(p, { loop: cfg.loop, speed: cfg.speed, wave: cfg.wave,
-        low: cfg.low, high: cfg.high, bass: cfg.bass }, paint, function () {
+        low: cfg.low, high: cfg.high, snare: cfg.snare, bass: cfg.bass }, paint, function () {
           stop = null;
           box.classList.remove("playing");
           paint(-1);
