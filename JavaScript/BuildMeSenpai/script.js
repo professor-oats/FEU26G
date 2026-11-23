@@ -2743,12 +2743,21 @@ function beginAudioDraft(event) {
   detailSelect.value = "16";
 
   const trimInput = make("input", { type: "checkbox", checked: true });
-  const noiseInput = make("input", { type: "checkbox" });
+  //const noiseInput = make("input", { type: "checkbox" });
   const bassInput = make("input", { type: "checkbox" });
   const punchInput = make("input", { type: "checkbox" });
-  const drumInput = make("input", { type: "checkbox" });
+  //const drumInput = make("input", { type: "checkbox" });
   const envInput = make("input", { type: "checkbox" });
-  const sawInput = make("input", { type: "checkbox" });
+  //const sawInput = make("input", { type: "checkbox" });
+
+  const lowSelect = makeSelect([
+    ["kick", "Kick (from detected hits)"], ["sine", "Sine bands"],
+    ["saw", "Sawtooth bands"], ["noise", "Noise bands"], ["off", "Off"]
+  ]);
+  const highSelect = makeSelect([
+    ["noise", "Noise bands"], ["sine", "Sine bands"], ["saw", "Sawtooth bands"], ["off", "Off"]
+  ]);
+  const tightInput = make("input", { type: "checkbox", checked: true });
 
   const speedInput = make("input", { type: "range", min: 0.25, max: 4, step: 0.05, value: 1 });
   const speedOut = make("span", { textContent: " 1.00x" });
@@ -2809,7 +2818,7 @@ function beginAudioDraft(event) {
 
   function refreshPattern() {
     pattern = base
-      ? (drumInput.checked ? applyEnvelope(base, true)
+      ? (tightInput.checked ? applyEnvelope(base, true)
         : envInput.checked ? applyEnvelope(base)
           : base)
       : null;
@@ -2817,11 +2826,14 @@ function beginAudioDraft(event) {
     redraw();
   }
 
+  /*
   const waveValue = () =>
     drumInput.checked ? "drum"
       : noiseInput.checked ? "noise"
         : sawInput.checked ? "sawtooth"
           : "sine";
+
+   */
 
   async function build() {
     stopPreview?.();
@@ -2883,7 +2895,8 @@ function beginAudioDraft(event) {
     if (base) build();
   });
   punchInput.addEventListener("change", () => { if (base) build(); });
-  drumInput.addEventListener("change", refreshPattern);
+  //drumInput.addEventListener("change", refreshPattern);
+  tightInput.addEventListener("change", refreshPattern);
 
   speedInput.addEventListener("input", () => {
     speedOut.textContent = ` ${speed().toFixed(2)}x`;
@@ -2902,7 +2915,7 @@ function beginAudioDraft(event) {
 
     stopPreview = playPattern(
       getPatternBytes(pattern),
-      { loop: loopInput.checked, speed: speed(), wave: waveValue(), bass: bassInput.checked },
+      { loop: loopInput.checked, speed: speed(), low: lowSelect.value, high: highSelect.value, bass: bassInput.checked },
       redraw,
       () => {
         stopPreview = null;
@@ -2931,7 +2944,8 @@ function beginAudioDraft(event) {
       color: colorInput.value,
       mode: modeSelect.value,
       speed: speed(),
-      wave: waveValue(),
+      low: lowSelect.value,
+      high: highSelect.value,
       bass: bassInput.checked,
       loop: loopInput.checked,
       pattern
@@ -2959,11 +2973,12 @@ function beginAudioDraft(event) {
     trimLabel,
     speedLabel,
     labelled("Envelope (smooth attack / release)", envInput),
-    labelled("Sawtooth waveform", sawInput),
-    labelled("Noise bands (drums / percussion)", noiseInput),
+    labelled("Low layer (< 160 Hz)", lowSelect),
+    labelled("High layer (> 160 Hz)", highSelect),
+    labelled("Tight decay (percussion)", tightInput),
     labelled("Boost bass (long window + harmonics)", bassInput),
     labelled("Punch (emphasize hits)", punchInput),
-    labelled("Drum mode (sine kick + noise rest, tight decay)", drumInput),
+    //labelled("Drum mode (sine kick + noise rest, tight decay)", drumInput),
     labelled("Min Hz", fminInput),
     labelled("Max Hz", fmaxInput),
     labelled("Pattern color", colorInput),
@@ -3606,20 +3621,26 @@ function playPattern(p, o, onProgress, onEnd) {
   if (ac.state === "suspended") ac.resume();
 
   var speed = Math.min(4, Math.max(0.25, o.speed || 1));
-  var wave = (o.wave === "sawtooth" || o.wave === "noise" || o.wave === "drum") ? o.wave : "sine";
-  var bass = o.bass === true;
   var F = p.frames, B = p.bands, dur = p.duration / speed;
+  var bass = o.bass === true;
+  var split = o.split || 160;
+
+  var legacy = {
+    sine: ["sine", "sine"], sawtooth: ["saw", "saw"],
+    noise: ["noise", "noise"], drum: ["kick", "noise"]
+  }[o.wave || "sine"] || ["sine", "sine"];
+  var lowV = o.low || legacy[0];
+  var highV = o.high || legacy[1];
+  var LOUD = { sine: 0.25, saw: 0.12, noise: 0.6, kick: 0.45, off: 0.25 };
 
   var comp = ac.createDynamicsCompressor();
   var master = ac.createGain();
-  master.gain.value =
-    (wave === "sawtooth" ? 0.12 : wave === "noise" ? 0.6 : wave === "drum" ? 0.45 : 0.25) *
-    (bass ? 0.8 : 1);
+  master.gain.value = ((LOUD[lowV] + LOUD[highV]) / 2) * (bass ? 0.8 : 1);
   master.connect(comp);
   comp.connect(ac.destination);
 
   var noiseBuf = null;
-  if (wave === "noise" || wave === "drum") {
+  if (lowV === "noise" || highV === "noise" || lowV === "kick") {
     noiseBuf = ac.createBuffer(1, ac.sampleRate * 2, ac.sampleRate);
     var nd = noiseBuf.getChannelData(0);
     for (var n = 0; n < nd.length; n++) nd[n] = Math.random() * 2 - 1;
@@ -3627,14 +3648,14 @@ function playPattern(p, o, onProgress, onEnd) {
 
   var bandRatio = Math.pow(p.fmax / p.fmin, 1 / (B - 1));
   var bandQ = Math.sqrt(bandRatio) / (bandRatio - 1);
+  var hasEvents = lowV === "kick" && p.events && p.events.length > 0;
 
-  var curves = [], freqs = [];
-  var drum = wave === "drum";
-
+  var curves = [], freqs = [], voices = [];
   for (var b = 0; b < B; b++) {
     var freq = p.fmin * Math.pow(bandRatio, b);
+    var voice = freq < split ? lowV : highV;
     var gain = bass && freq < 200 ? 1.6 : 1;
-    if (drum && freq < 160) gain *= 0.25; // the kick voice carries the low end
+    if (voice === "kick") { gain *= hasEvents ? 0.1 : 0.25; voice = "sine"; } // kicks carry the low end
 
     var c = new Float32Array(F), any = false;
     for (var f = 0; f < F; f++) {
@@ -3643,76 +3664,79 @@ function playPattern(p, o, onProgress, onEnd) {
       if (v > 0) any = true;
     }
     freqs.push(freq);
-    curves.push(any ? c : null);
+    voices.push(voice);
+    curves.push(any && voice !== "off" ? c : null);
   }
 
-  // ---- Kick detection (Drum mode): onsets in the bands below 160 Hz ----
-  var kicks = [];
+  // Fallback for patterns without events: detect low-band onsets on the grid.
+  function gridKicks() {
+    var low = [], res = [];
+    for (var i = 0; i < B; i++) if (freqs[i] < split) low.push(i);
+    if (!low.length) return res;
 
-  if (drum) {
-    var low = [];
-    for (var lb = 0; lb < B; lb++) if (freqs[lb] < 160) low.push(lb);
-
-    var peak = function (f) {
-      var m = 0, who = low[0];
-      for (var i = 0; i < low.length; i++) {
-        var val = p.bytes[f * B + low[i]] / 255;
-        if (val > m) { m = val; who = low[i]; }
+    function peak(f) {
+      var m = 0, w = low[0];
+      for (var k = 0; k < low.length; k++) {
+        var v = p.bytes[f * B + low[k]] / 255;
+        if (v > m) { m = v; w = low[k]; }
       }
-      return { level: m, band: who };
-    };
+      return { level: m, band: w };
+    }
 
-    var gapFrames = Math.ceil(0.09 / (p.duration / F));
-    var lastKick = -gapFrames;
-    var prev = 0;
-
-    for (var kf = 0; kf < F && low.length; kf++) {
-      var cur = peak(kf);
-
-      if (cur.level >= 0.3 && cur.level - prev >= 0.15 && kf - lastKick >= gapFrames) {
-        // The loudest band may peak one frame later.
-        var next = kf + 1 < F ? peak(kf + 1) : cur;
-        var band = next.level > cur.level ? next.band : cur.band;
-
-        kicks.push({
-          pos: kf / F,
-          vel: Math.min(1, Math.max(cur.level, next.level) * 1.2),
-          f0: Math.min(90, Math.max(42, freqs[band]))
-        });
-        lastKick = kf;
+    var gap = Math.ceil(0.09 / (p.duration / F)), last = -gap, prev = 0;
+    for (var f = 0; f < F; f++) {
+      var cur = peak(f);
+      if (cur.level >= 0.3 && cur.level - prev >= 0.15 && f - last >= gap) {
+        res.push({ pos: f / F, vel: Math.min(1, cur.level * 1.2),
+          f0: Math.min(90, Math.max(42, freqs[cur.band])) });
+        last = f;
       }
       prev = cur.level;
+    }
+    return res;
+  }
+
+  var kicks = [];
+  if (lowV === "kick") {
+    if (hasEvents) {
+      for (var e = 0; e < p.events.length; e++) {
+        kicks.push({ pos: p.events[e][0] / p.duration, f0: p.events[e][1], vel: p.events[e][2] });
+      }
+    } else {
+      kicks = gridKicks();
     }
   }
 
   var nodes = [], t0 = 0, raf = 0, stopped = false;
+  var KICK_GAIN = 1.5;
 
+  // Fitted to the target's kick: 5 ms chirp from ~3.3x down to f0, 51 ms plateau,
+  // then exponential decay (tau 65 ms). Times are in real seconds, so speed
+  // changes tempo only.
   function playKick(k) {
     var t = t0 + k.pos * dur;
-    var start = Math.min(260, k.f0 * 3);
+    var f0 = Math.min(130, Math.max(35, k.f0));
+    var peakGain = k.vel * KICK_GAIN;
 
-    // Body: a sine that falls from start to f0.
     var osc = ac.createOscillator(), og = ac.createGain();
     osc.type = "sine";
-    osc.frequency.setValueAtTime(start, t);
-    osc.frequency.exponentialRampToValueAtTime(k.f0, t + 0.09);
-
-    og.gain.setValueAtTime(0.0001, t);
-    og.gain.linearRampToValueAtTime(k.vel, t + 0.004);
-    og.gain.exponentialRampToValueAtTime(0.001, t + 0.28);
-
+    osc.frequency.setValueAtTime(Math.min(270, f0 * 3.3), t);
+    osc.frequency.setTargetAtTime(f0, t, 0.005);
+    og.gain.setValueAtTime(0, t);
+    og.gain.linearRampToValueAtTime(peakGain, t + 0.004);
+    og.gain.setValueAtTime(peakGain, t + 0.051);
+    og.gain.setTargetAtTime(0, t + 0.051, 0.0655);
     osc.connect(og);
     og.connect(master);
     osc.start(t);
-    osc.stop(t + 0.32);
+    osc.stop(t + 0.5);
     nodes.push(osc);
 
-    // Optional second harmonic for small speakers: delete this block to drop it.
-    if (bass) {
+    if (bass) { // optional 2nd harmonic for small speakers
       var h = ac.createOscillator(), hg = ac.createGain();
       h.type = "sine";
-      h.frequency.setValueAtTime(start * 2, t);
-      h.frequency.exponentialRampToValueAtTime(k.f0 * 2, t + 0.09);
+      h.frequency.setValueAtTime(Math.min(540, f0 * 6.6), t);
+      h.frequency.setTargetAtTime(f0 * 2, t, 0.005);
       hg.gain.setValueAtTime(k.vel * 0.25, t);
       hg.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
       h.connect(hg);
@@ -3722,12 +3746,11 @@ function playPattern(p, o, onProgress, onEnd) {
       nodes.push(h);
     }
 
-    // Click: a very short, high-passed noise burst.
     var cs = ac.createBufferSource(), hp = ac.createBiquadFilter(), cg = ac.createGain();
     cs.buffer = noiseBuf;
     hp.type = "highpass";
     hp.frequency.value = 1500;
-    cg.gain.setValueAtTime(k.vel * 0.35, t);
+    cg.gain.setValueAtTime(k.vel * 0.2, t);
     cg.gain.exponentialRampToValueAtTime(0.001, t + 0.015);
     cs.connect(hp);
     hp.connect(cg);
@@ -3743,20 +3766,26 @@ function playPattern(p, o, onProgress, onEnd) {
     for (var b = 0; b < B; b++) {
       if (!curves[b]) continue;
 
-      var freq = freqs[b];
-      var tonal = wave === "sine" || wave === "sawtooth" || (wave === "drum" && freq < 160);
-      var g = ac.createGain();
-      var src;
+      var voice = voices[b], freq = freqs[b];
+      var g = ac.createGain(), src;
 
-      if (tonal) {
+      if (voice === "noise") {
+        src = ac.createBufferSource();
+        src.buffer = noiseBuf;
+        src.loop = true;
+        var bp = ac.createBiquadFilter();
+        bp.type = "bandpass";
+        bp.frequency.value = freq;
+        bp.Q.value = bandQ;
+        src.connect(bp);
+        bp.connect(g);
+      } else {
         src = ac.createOscillator();
-        src.type = wave === "sawtooth" ? "sawtooth" : "sine";
+        src.type = voice === "saw" ? "sawtooth" : "sine";
         src.frequency.value = freq;
         src.connect(g);
 
-        // Second harmonic for low sustained notes (not used in Drum mode,
-        // where the kick voice has its own).
-        if (bass && !drum && freq < 120) {
+        if (bass && voice === "sine" && freq < 120 && lowV !== "kick") {
           var h = ac.createOscillator(), hg = ac.createGain();
           h.type = "sine";
           h.frequency.value = freq * 2;
@@ -3767,16 +3796,6 @@ function playPattern(p, o, onProgress, onEnd) {
           h.stop(t0 + dur + 0.05);
           nodes.push(h);
         }
-      } else {
-        src = ac.createBufferSource();
-        src.buffer = noiseBuf;
-        src.loop = true;
-        var bp = ac.createBiquadFilter();
-        bp.type = "bandpass";
-        bp.frequency.value = freq;
-        bp.Q.value = bandQ;
-        src.connect(bp);
-        bp.connect(g);
       }
 
       g.gain.setValueAtTime(0, ac.currentTime);
@@ -3789,7 +3808,6 @@ function playPattern(p, o, onProgress, onEnd) {
     }
 
     for (var i = 0; i < kicks.length; i++) playKick(kicks[i]);
-    if (drum) console.log("kicks found:", kicks.length, kicks.map(function (k) { return Math.round(k.f0); }));
   }
 
   function finish() {
@@ -3848,7 +3866,8 @@ function getPatternBytes(pattern) {
   return p;
 }
 
-function finishPattern(bytes, frames, bands, duration, fmin, fmax) {
+function finishPattern(bytes, frames, bands, duration, fmin, fmax, events = []) {
+
   const n = bytes.length;
   const packed = new Uint8Array(Math.ceil(n / 2));
 
@@ -3857,7 +3876,7 @@ function finishPattern(bytes, frames, bands, duration, fmin, fmax) {
     packed[i >> 1] |= i & 1 ? nib : nib << 4;
   }
 
-  return { frames, bands, duration, fmin, fmax, data: bytesToB64(packed) };
+  return { frames, bands, duration, fmin, fmax, data: bytesToB64(packed), events };
 }
 
 function plotCell(bytes, B, f, b, v) {
@@ -3900,6 +3919,94 @@ function fft(re, im) {
       }
     }
   }
+}
+
+// Forward-only RBJ low-pass (Q = 0.7071).
+function lowpassBiquad(x, sr, fc) {
+  const w = (2 * Math.PI * fc) / sr, cs = Math.cos(w), al = Math.sin(w) / (2 * 0.7071);
+  const b0 = (1 - cs) / 2, b1 = 1 - cs, b2 = b0, a0 = 1 + al, a1 = -2 * cs, a2 = 1 - al;
+  const y = new Float32Array(x.length);
+  let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+
+  for (let i = 0; i < x.length; i++) {
+    const v = (b0 * x[i] + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2) / a0;
+    y[i] = v; x2 = x1; x1 = x[i]; y2 = y1; y1 = v;
+  }
+  return y;
+}
+
+// Pitch of a kick: zero-padded FFT of 100 ms, peak in 40-130 Hz, parabolic refinement.
+function estimateKickF0(sig, sr, s0) {
+  const len = Math.min(Math.round(0.1 * sr), sig.length - s0);
+  if (len < 256) return 60;
+
+  const N = 65536, re = new Float32Array(N), im = new Float32Array(N);
+  for (let i = 0; i < len; i++) {
+    re[i] = sig[s0 + i] * (0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (len - 1)));
+  }
+  fft(re, im);
+
+  const binHz = sr / N;
+  const mag = (k) => Math.hypot(re[k], im[k]);
+  let best = -1, bi = 0;
+
+  for (let k = Math.ceil(40 / binHz); k <= Math.floor(130 / binHz); k++) {
+    const v = mag(k);
+    if (v > best) { best = v; bi = k; }
+  }
+
+  const a = Math.log(mag(bi - 1) + 1e-9), b = Math.log(best + 1e-9), c = Math.log(mag(bi + 1) + 1e-9);
+  return (bi + (0.5 * (a - c)) / (a - 2 * b + c + 1e-12)) * binHz;
+}
+
+// Returns [[seconds, f0 Hz, velocity 0..1], ...] relative to `start`.
+function extractKickEvents(mono, sr, start, end) {
+  if (end - start < sr * 0.3) return [];
+
+  const seg = mono.subarray(start, end);
+  const low = lowpassBiquad(lowpassBiquad(seg, sr, 200), sr, 200); // 4th order
+  const blk = Math.max(1, Math.round(sr * 0.002));
+  const m = Math.floor(low.length / blk);
+  const rms = new Float32Array(m);
+  let gmax = 0;
+
+  for (let i = 0; i < m; i++) {
+    let s = 0;
+    for (let j = 0; j < blk; j++) { const v = low[i * blk + j]; s += v * v; }
+    rms[i] = Math.sqrt(s / blk);
+    if (rms[i] > gmax) gmax = rms[i];
+  }
+  if (gmax < 1e-4) return [];
+
+  const step = blk / sr;
+  const refract = Math.round(0.06 / step);
+  const events = [];
+
+  for (let i = 10; i < m - 16 && events.length < 256;) {
+    let before = 0, after = 0, pk = 0;
+    for (let j = i - 10; j < i; j++) before += rms[j];
+    before /= 10;
+    for (let j = i; j < i + 10; j++) after = Math.max(after, rms[j]);
+
+    // Loud enough (25% of the loudest hit) and a sharp rise: snares fail the level test.
+    if (after >= 0.25 * gmax && after >= 2.5 * (before + 1e-9)) {
+      for (let j = i; j < i + 16; j++) pk = Math.max(pk, rms[j]);
+
+      let j = i - 5;
+      while (j < i + 16 && rms[j] < 0.2 * pk) j++;
+
+      events.push([
+        Math.round(Math.max(0, j * step - 0.003) * 1000) / 1000,   // -3 ms filter delay
+        Math.round(estimateKickF0(low, sr, j * blk) * 10) / 10,
+        Math.round(Math.min(1, (pk / gmax) * 1.2) * 100) / 100
+      ]);
+      i += refract;
+    } else {
+      i++;
+    }
+  }
+
+  return events;
 }
 
 function analyzeBuffer(buffer, B, fmin, fmax, opts = {}) {
@@ -4108,7 +4215,8 @@ function analyzeBuffer(buffer, B, fmin, fmax, opts = {}) {
     bytes[i] = v < GATE ? 0 : v;
   }
 
-  return finishPattern(bytes, F, B, Math.max(0.5, dur), fmin, top);
+  const events = extractKickEvents(mono, sr, start, end);
+  return finishPattern(bytes, F, B, Math.max(0.5, dur), fmin, top, events);
 }
 
 async function analyzeAudioFile(file, B, fmin, fmax, opts) {
@@ -4154,7 +4262,7 @@ function applyEnvelope(p, tight = false) {
     }
   }
 
-  return finishPattern(out, F, B, p.duration, p.fmin, p.fmax);
+  return finishPattern(out, F, B, p.duration, p.fmin, p.fmax, p.events);
 }
 
 // ---------- Series and paths -> pattern ----------
@@ -5653,6 +5761,10 @@ function sanitizeAudio(element) {
   const clamp = (v, lo, hi, fallback) =>
     Number.isFinite(Number(v)) ? Math.min(Math.max(Number(v), lo), hi) : fallback;
 
+  const events = (Array.isArray(p.events) ? p.events : [])
+    .slice(0, 256)
+    .filter((e) => Array.isArray(e) && e.length >= 3 && e.slice(0, 3).every(Number.isFinite))
+    .map((e) => [clamp(e[0], 0, 120, 0), clamp(e[1], 20, 200, 60), clamp(e[2], 0, 1, 1)]);
 
   if (
     !Number.isInteger(frames) || frames < 2 || frames > 768 ||
@@ -5687,9 +5799,11 @@ function sanitizeAudio(element) {
     mode: element.mode === "bars" ? "bars" : "spectrogram",
     speed: clamp(element.speed, 0.25, 4, 1),
     wave: ["sawtooth", "noise", "drum"].includes(element.wave) ? element.wave : "sine",
+    low: ["kick", "sine", "saw", "noise", "off"].includes(element.low) ? element.low : undefined,
+    high: ["noise", "sine", "saw", "off"].includes(element.high) ? element.high : undefined,
     bass: element.bass === true,
     loop: element.loop === true,
-    pattern: { frames, bands, duration: clamp(p.duration, 0.5, 60, 6), fmin, fmax, data }
+    pattern: { frames, bands, duration: clamp(p.duration, 0.5, 60, 6), fmin, fmax, data, events }
   };
 }
 
@@ -6030,6 +6144,11 @@ function buildElementHtml(data) {
       bass: data.bass === true,
       speed: Math.min(4, Math.max(0.25, Number(data.speed) || 1)),
       wave: ["sawtooth", "noise", "drum"].includes(data.wave) ? data.wave : "sine",
+      events: (Array.isArray(p.events) ? p.events : []).slice(0, 256)
+        .filter((e) => Array.isArray(e) && e.slice(0, 3).every(Number.isFinite))
+        .map((e) => [e[0], e[1], e[2]]),
+      low: ["kick", "sine", "saw", "noise", "off"].includes(data.low) ? data.low : undefined,
+      high: ["noise", "sine", "saw", "off"].includes(data.high) ? data.high : undefined,
     };
 
     const bg = safePaint(data.background, "#0b1020");
@@ -6083,7 +6202,8 @@ ${[bytesFromB64, drawPattern, playPattern].map((fn) => fn.toString()).join("\n")
     var ctx = cv.getContext("2d");
     var p = {
       frames: cfg.frames, bands: cfg.bands, duration: cfg.duration,
-      fmin: cfg.fmin, fmax: cfg.fmax, bytes: bytesFromB64(cfg.data, cfg.frames * cfg.bands)
+      fmin: cfg.fmin, fmax: cfg.fmax, bytes: bytesFromB64(cfg.data, cfg.frames * cfg.bands),
+      events: cfg.events
     };
     var cache = {};
     var stop = null;
@@ -6096,11 +6216,12 @@ ${[bytesFromB64, drawPattern, playPattern].map((fn) => fn.toString()).join("\n")
     function toggle() {
       if (stop) { stop(); return; }
       box.classList.add("playing");
-            stop = playPattern(p, { loop: cfg.loop, speed: cfg.speed, wave: cfg.wave, bass: cfg.bass }, paint, function () {
-        stop = null;
-        box.classList.remove("playing");
-        paint(-1);
-      });
+      stop = playPattern(p, { loop: cfg.loop, speed: cfg.speed, wave: cfg.wave,
+        low: cfg.low, high: cfg.high, bass: cfg.bass }, paint, function () {
+          stop = null;
+          box.classList.remove("playing");
+          paint(-1);
+        });
     }
 
     box.addEventListener("click", toggle);
