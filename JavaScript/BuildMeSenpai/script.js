@@ -2760,6 +2760,38 @@ function beginAudioDraft(event) {
   const snareSelect = makeSelect([["fit", "Snare (from detected hits)"], ["off", "Off"]]);
   const tightInput = make("input", { type: "checkbox", checked: true });
 
+  // --- Hit detection: changes events only, never the spectrogram grid ---
+  let region = null;            // decoded audio of the last file analysis
+  let redetectTimer = 0;
+
+  const kickMaxInput = make("input", { type: "range", min: 0, max: 140, step: 5, value: 140 });
+  const kickSensInput = make("input", { type: "range", min: 0, max: 100, step: 1, value: 50 });
+  const snareMinInput = make("input", { type: "range", min: 0, max: 8000, step: 100, value: 0 });
+  const snareSensInput = make("input", { type: "range", min: 0, max: 100, step: 1, value: 50 });
+  const counts = make("div", { className: "button-hint" });
+
+  function sliderLabel(text, input, format) {
+    const out = make("span", { textContent: ` ${format(input.value)}` });
+    input.addEventListener("input", () => { out.textContent = ` ${format(input.value)}`; });
+    const label = labelled(text, input);
+    label.append(out);
+    return label;
+  }
+
+  const detectLabels = [
+    sliderLabel("Kick: only pitched below", kickMaxInput, (v) => (Number(v) >= 140 ? "off" : `${v} Hz`)),
+    sliderLabel("Kick sensitivity", kickSensInput, (v) => `${v}%`),
+    sliderLabel("Snare: only brighter than", snareMinInput, (v) => (Number(v) <= 0 ? "off" : `${v} Hz`)),
+    sliderLabel("Snare sensitivity", snareSensInput, (v) => `${v}%`)
+  ];
+
+  const detectOpts = () => ({
+    kickMax: Number(kickMaxInput.value),
+    kickSens: Number(kickSensInput.value) / 100,
+    snareMin: Number(snareMinInput.value),
+    snareSens: Number(snareSensInput.value) / 100
+  });
+
   const speedInput = make("input", { type: "range", min: 0.25, max: 4, step: 0.05, value: 1 });
   const speedOut = make("span", { textContent: " 1.00x" });
   const speedLabel = labelled("Playback speed", speedInput);
@@ -2786,6 +2818,9 @@ function beginAudioDraft(event) {
     secondsLabel.hidden = source.value === "file";
     detailLabel.hidden = source.value !== "file";
     trimLabel.hidden = source.value !== "file";
+
+    detectLabels.forEach((l) => { l.hidden = source.value !== "file"; });
+    counts.hidden = source.value !== "file";
   }
 
   const redraw = (progress = -1) => {
@@ -2827,17 +2862,37 @@ function beginAudioDraft(event) {
     redraw();
   }
 
-  /*
-  const waveValue = () =>
-    drumInput.checked ? "drum"
-      : noiseInput.checked ? "noise"
-        : sawInput.checked ? "sawtooth"
-          : "sine";
+  function showCounts() {
+    if (!base || !region) { counts.textContent = ""; return; }
+    let k = 0, s = 0;
+    for (const e of base.events || []) {
+      if (e[3] === 1) s++; else k++;
+    }
+    counts.textContent = `Detected: ${k} kicks, ${s} snares`;
+  }
 
-   */
+  // Re-runs the detectors only; the grid in `base` is reused.
+  function redetect() {
+    clearTimeout(redetectTimer);
+    redetectTimer = 0;
+    if (!region || !base || analyzeButton.disabled) return;
+    base = { ...base, events: detectEvents(region, detectOpts()) };
+    refreshPattern();
+    showCounts();
+  }
+
+  // Any slider move stops the preview at once, then re-detects after a short pause.
+  function onDetectInput() {
+    stopPreview?.();
+    clearTimeout(redetectTimer);
+    redetectTimer = setTimeout(redetect, 150);
+  }
 
   async function build() {
     stopPreview?.();
+    clearTimeout(redetectTimer);
+    redetectTimer = 0;
+    region = null;
     error.textContent = "";
     status.textContent = "Working...";
     analyzeButton.disabled = true;
@@ -2854,12 +2909,17 @@ function beginAudioDraft(event) {
         const file = fileInput.files[0];
         if (!file) throw new Error("Choose an audio file first.");
 
+        const out = {};
         base = await analyzeAudioFile(file, bands, fmin, fmax, {
           fps: Number(detailSelect.value),
           trim: trimInput.checked,
           bass: bassInput.checked,
-          punch: punchInput.checked
+          punch: punchInput.checked,
+          ...detectOpts(),
+          out
         });
+        region = out.region || null;
+
       } else if (source.value === "raw") {
         base = patternFromText(rawArea.value, bands, seconds, fmin, fmax);
       } else {
@@ -2872,10 +2932,12 @@ function beginAudioDraft(event) {
     } finally {
       analyzeButton.disabled = false;
       refreshPattern();
+      showCounts();
     }
   }
 
   const close = () => {
+    clearTimeout(redetectTimer);
     stopPreview?.();
     draft.remove();
     activeAudioDraft = null;
@@ -2899,6 +2961,9 @@ function beginAudioDraft(event) {
   //drumInput.addEventListener("change", refreshPattern);
   tightInput.addEventListener("change", refreshPattern);
 
+  [kickMaxInput, kickSensInput, snareMinInput, snareSensInput]
+    .forEach((c) => c.addEventListener("input", onDetectInput));
+
   speedInput.addEventListener("input", () => {
     speedOut.textContent = ` ${speed().toFixed(2)}x`;
     updateStatus();
@@ -2912,6 +2977,7 @@ function beginAudioDraft(event) {
       return;
     }
 
+    if (redetectTimer) redetect();   // apply a pending slider change before playing
     previewButton.textContent = "■ Stop";
 
     stopPreview = playPattern(
@@ -2950,6 +3016,7 @@ function beginAudioDraft(event) {
       high: highSelect.value,
       snare: snareSelect.value,
       bass: bassInput.checked,
+      detect: region ? detectOpts() : undefined,
       loop: loopInput.checked,
       pattern
     };
@@ -2980,6 +3047,7 @@ function beginAudioDraft(event) {
     labelled("High layer (> 160 Hz)", highSelect),
     labelled("Tight decay (percussion)", tightInput),
     labelled("Snare", snareSelect),
+    ...detectLabels,
     labelled("Boost bass (long window + harmonics)", bassInput),
     labelled("Punch (emphasize hits)", punchInput),
     //labelled("Drum mode (sine kick + noise rest, tight decay)", drumInput),
@@ -3741,7 +3809,7 @@ function playPattern(p, o, onProgress, onEnd) {
     }
   }
 
-  var nodes = [], t0 = 0, raf = 0, stopped = false;
+  var nodes = [], passes = [], t0 = 0, passStart = 0, nextStart = 0, raf = 0, timer = 0, stopped = false;
   var KICK_GAIN = 1.5;
   var PATTERN_DELAY = 0;
 
@@ -3836,8 +3904,11 @@ function playPattern(p, o, onProgress, onEnd) {
     nodes.push(osc);
   }
 
-  function run() {
-    t0 = ac.currentTime + 0.08;
+  function run(start) {
+    t0 = start;
+    nodes = [];                       // one list per pass, so finished passes can be dropped
+    nodes.end = start + dur + 0.6;
+    passes.push(nodes);
 
     for (var b = 0; b < B; b++) {
       if (!curves[b]) continue;
@@ -3891,25 +3962,39 @@ function playPattern(p, o, onProgress, onEnd) {
     if (stopped) return;
     stopped = true;
     cancelAnimationFrame(raf);
-    nodes.forEach(function (n) { try { n.stop(); } catch (e) {} });
+    clearInterval(timer);
+    passes.forEach(function (list) {
+      list.forEach(function (n) { try { n.stop(); } catch (e) {} });
+    });
     try { ac.close(); } catch (e) {}
     if (onEnd) onEnd();
   }
 
+  // Looping reuses this one AudioContext: the next pass is scheduled LOOK seconds ahead
+  // on the audio clock, so there is no gap and it survives throttled timers.
+  var LOOK = 2;
+  function schedule() {
+    if (stopped) return;
+    var now = ac.currentTime;
+    while (o.loop && nextStart - now < LOOK) { run(nextStart); nextStart += dur; }
+    while (passes.length > 1 && passes[0].end < now) passes.shift();
+  }
+
   function tick() {
     if (stopped) return;
-    var t = (ac.currentTime - t0) / dur;
+    var now = ac.currentTime;
+    if (o.loop) while (now >= passStart + dur) passStart += dur;
+    else if (now >= passStart + dur) { finish(); return; }
 
-    if (t >= 1) {
-      if (o.loop) { run(); t = 0; }
-      else { finish(); return; }
-    }
-
-    if (onProgress) onProgress(Math.max(0, Math.min(1, t)));
+    if (onProgress) onProgress(Math.max(0, Math.min(1, (now - passStart) / dur)));
     raf = requestAnimationFrame(tick);
   }
 
-  run();
+  passStart = nextStart = ac.currentTime + 0.08;
+  run(nextStart);
+  nextStart += dur;
+  schedule();
+  timer = setInterval(schedule, 250);
   tick();
   return finish;
 }
@@ -4013,7 +4098,7 @@ function lowpassBiquad(x, sr, fc) {
 }
 
 // Pitch of a kick: zero-padded FFT of 100 ms, peak in 40-130 Hz, parabolic refinement.
-function estimateKickF0(sig, sr, s0) {
+function estimateKickF0(sig, sr, s0, hiHz = 130) {
   const len = Math.min(Math.round(0.1 * sr), sig.length - s0);
   if (len < 256) return 60;
 
@@ -4027,7 +4112,7 @@ function estimateKickF0(sig, sr, s0) {
   const mag = (k) => Math.hypot(re[k], im[k]);
   let best = -1, bi = 0;
 
-  for (let k = Math.ceil(40 / binHz); k <= Math.floor(130 / binHz); k++) {
+  for (let k = Math.ceil(40 / binHz); k <= Math.floor(hiHz / binHz); k++) {
     const v = mag(k);
     if (v > best) { best = v; bi = k; }
   }
@@ -4037,24 +4122,42 @@ function estimateKickF0(sig, sr, s0) {
 }
 
 // Returns [[seconds, f0 Hz, velocity 0..1], ...] relative to `start`.
-function extractKickEvents(mono, sr, start, end) {
+// k = { cut: low-pass Hz (default 200), sens: 0..1 (default 0.5), cache: {} (optional) }.
+// Returns [[seconds, f0 Hz, velocity 0..1], ...] relative to `start`.
+// k = { maxHz: drop kicks pitched above this (default: no limit), sens: 0..1 (default 0.5), cache: {} (optional) }.
+function extractKickEvents(mono, sr, start, end, k = {}) {
   if (end - start < sr * 0.3) return [];
 
-  const seg = mono.subarray(start, end);
-  const low = lowpassBiquad(lowpassBiquad(seg, sr, 200), sr, 200); // 4th order
-  const blk = Math.max(1, Math.round(sr * 0.002));
-  const m = Math.floor(low.length / blk);
-  const rms = new Float32Array(m);
-  let gmax = 0;
+  const cut = 200;                                       // listening filter, fixed
+  const maxHz = k.maxHz ?? Infinity;                     // gate on the measured pitch
+  const sens = Math.min(1, Math.max(0, k.sens ?? 0.5));
+  const level = Math.max(0.03, 0.5 * (1 - sens));        // 0.25 at 0.5
+  const rise = Math.max(1.3, 4 - 3 * sens);              // 2.5 at 0.5
+  const f0Hi = 130;
 
-  for (let i = 0; i < m; i++) {
-    let s = 0;
-    for (let j = 0; j < blk; j++) { const v = low[i * blk + j]; s += v * v; }
-    rms[i] = Math.sqrt(s / blk);
-    if (rms[i] > gmax) gmax = rms[i];
+  // Filtering and pitch estimates do not depend on the settings, so a cache from the caller
+  // lets slider moves skip them (the cache belongs to one mono/start/end).
+  const cache = k.cache || {};
+  if (cache.cut !== cut) {
+    const low = lowpassBiquad(lowpassBiquad(mono.subarray(start, end), sr, cut), sr, cut); // 4th order
+    const blk = Math.max(1, Math.round(sr * 0.002));
+    const rms = new Float32Array(Math.floor(low.length / blk));
+    let gmax = 0;
+
+    for (let i = 0; i < rms.length; i++) {
+      let s = 0;
+      for (let j = 0; j < blk; j++) { const v = low[i * blk + j]; s += v * v; }
+      rms[i] = Math.sqrt(s / blk);
+      if (rms[i] > gmax) gmax = rms[i];
+    }
+    cache.cut = cut; cache.low = low; cache.rms = rms; cache.gmax = gmax;
+    cache.blk = blk; cache.f0 = new Map();
   }
+
+  const { low, rms, gmax, blk } = cache;
   if (gmax < 1e-4) return [];
 
+  const m = rms.length;
   const step = blk / sr;
   const refract = Math.round(0.06 / step);
   const events = [];
@@ -4065,16 +4168,21 @@ function extractKickEvents(mono, sr, start, end) {
     before /= 10;
     for (let j = i; j < i + 10; j++) after = Math.max(after, rms[j]);
 
-    // Loud enough (25% of the loudest hit) and a sharp rise: snares fail the level test.
-    if (after >= 0.25 * gmax && after >= 2.5 * (before + 1e-9)) {
+    if (after >= level * gmax && after >= rise * (before + 1e-9)) {
       for (let j = i; j < i + 16; j++) pk = Math.max(pk, rms[j]);
 
       let j = i - 5;
       while (j < i + 16 && rms[j] < 0.2 * pk) j++;
 
+      let f0 = cache.f0.get(j * blk);
+      if (f0 === undefined) {
+        f0 = Math.round(estimateKickF0(low, sr, j * blk, f0Hi) * 10) / 10;
+        cache.f0.set(j * blk, f0);
+      }
+
       events.push([
         Math.round(Math.max(0, j * step - 0.003) * 1000) / 1000,   // -3 ms filter delay
-        Math.round(estimateKickF0(low, sr, j * blk) * 10) / 10,
+        f0,
         Math.round(Math.min(1, (pk / gmax) * 1.2) * 100) / 100
       ]);
       i += refract;
@@ -4083,7 +4191,7 @@ function extractKickEvents(mono, sr, start, end) {
     }
   }
 
-  return events;
+  return events.filter((e) => e[1] <= maxHz);   // last step, so a lower limit can only remove kicks
 }
 
 function highpassBiquad(x, sr, fc) {
@@ -4118,52 +4226,108 @@ function bandDb(sig, sr, i0, lo, hi) {
   return 10 * Math.log10(p);
 }
 
-// Returns [[seconds, 140, velocity 0..1, 1], ...] relative to `start` (the trailing 1 marks a snare).
-function extractSnareEvents(mono, sr, start, end) {
-  if (end - start < sr * 0.3) return [];
-  const seg = mono.subarray(start, end);
-  const hp = highpassBiquad(seg, sr, 3000);
-  const blk = Math.max(1, Math.round(sr * 0.002)), m = Math.floor(seg.length / blk);
-  const rh = new Float32Array(m);
-  let gmax = 0;
-  for (let j = 0; j < m; j++) {
-    let s = 0;
-    for (let i = j * blk; i < (j + 1) * blk; i++) s += hp[i] * hp[i];
-    rh[j] = Math.sqrt(s / blk);
-    if (rh[j] > gmax) gmax = rh[j];
+// Frequency below which half of the energy between lo and hi Hz lies, over 2048 samples
+// starting at sample i0 (uses your fft(re, im)).
+function medianHz(sig, sr, i0, lo, hi) {
+  const N = 4096, W = 2048;
+  const re = new Float32Array(N), im = new Float32Array(N);
+  for (let i = 0; i < W && i0 + i < sig.length; i++)
+    re[i] = sig[i0 + i] * (0.5 - 0.5 * Math.cos(2 * Math.PI * i / (W - 1)));
+  fft(re, im);
+
+  const k0 = Math.max(1, Math.ceil(lo * N / sr)), k1 = Math.min(N / 2 - 1, Math.floor(hi * N / sr));
+  let total = 0;
+  for (let k = k0; k <= k1; k++) total += re[k] * re[k] + im[k] * im[k];
+
+  let acc = 0;
+  for (let k = k0; k <= k1; k++) {
+    acc += re[k] * re[k] + im[k] * im[k];
+    if (acc >= total / 2) return Math.round(k * sr / N);
   }
+  return hi;
+}
+
+// Returns [[seconds, 140, velocity 0..1, 1], ...] relative to `start` (the trailing 1 marks a snare).
+// k = { minHz: drop snares whose energy centre is below this (default 0 = off), sens: 0..1 (default 0.5), cache: {} (optional) }.
+function extractSnareEvents(mono, sr, start, end, k = {}) {
+  if (end - start < sr * 0.3) return [];
+
+  const cut = 3000;                                      // listening filter, fixed
+  const minHz = k.minHz || 0;                            // gate on the hit's brightness
+  const sens = Math.min(1, Math.max(0, k.sens ?? 0.5));
+  const level = Math.max(0.03, 0.24 * (1 - sens));       // 0.12 at 0.5
+  const rise = Math.max(1.3, 3.2 - 2 * sens);            // 2.2 at 0.5
+  const ghost = Math.min(0.9, Math.max(0.05, 1 - sens)); // 0.5 at 0.5
+
+  const seg = mono.subarray(start, end);
+  const blk = Math.max(1, Math.round(sr * 0.002)), m = Math.floor(seg.length / blk);
+
+  // The envelope never changes; spectral verdicts depend only on the hit position.
+  const cache = k.cache || {};
+  if (cache.cut !== cut) {
+    const hp = highpassBiquad(seg, sr, cut);
+    const rh = new Float32Array(m);
+    let gmax = 0;
+    for (let j = 0; j < m; j++) {
+      let s = 0;
+      for (let i = j * blk; i < (j + 1) * blk; i++) s += hp[i] * hp[i];
+      rh[j] = Math.sqrt(s / blk);
+      if (rh[j] > gmax) gmax = rh[j];
+    }
+    cache.cut = cut; cache.rh = rh; cache.gmax = gmax; cache.spec = new Map();
+  }
+
+  const { rh, gmax } = cache;
   if (gmax < 1e-4) return [];
 
   const cand = [];
   let last = -99;
   for (let i = 10; i < m - 30; i++) {
     let before = 0, after = 0;
-    for (let k = i - 10; k < i; k++) before += rh[k] / 10;
-    for (let k = i; k < i + 10; k++) after = Math.max(after, rh[k]);
-    if (after < 0.12 * gmax || after < 2.2 * (before + 1e-9) || i - last <= 20) continue;
+    for (let q = i - 10; q < i; q++) before += rh[q] / 10;
+    for (let q = i; q < i + 10; q++) after = Math.max(after, rh[q]);
+    if (after < level * gmax || after < rise * (before + 1e-9) || i - last <= 20) continue;
 
     let j = i;                                   // walk back to the 20% point
     while (j > i - 6 && rh[j - 1] >= 0.2 * after) j--;
     const s0 = j * blk;
-    const hi = bandDb(seg, sr, s0, 4000, 12000);
-    const mid = bandDb(seg, sr, s0, 200, 1500) - hi;
-    const low = bandDb(seg, sr, s0, 30, 150) - hi;
+
     // Broadband gate, deliberately loose; the level gate below does the rest.
-    if (mid > -10 && low > -16 && low < -3 && cand.length < 256)
-      cand.push([Math.round(s0 / sr * 1000) / 1000, after]);
+    let v = cache.spec.get(s0);
+    if (v === undefined) {
+      const hi = bandDb(seg, sr, s0, 4000, 12000);
+      const mid = bandDb(seg, sr, s0, 200, 1500) - hi;
+      const low = bandDb(seg, sr, s0, 30, 150) - hi;
+      v = { ok: mid > -10 && low > -16 && low < -3, med: medianHz(seg, sr, s0, 200, 12000) };
+      cache.spec.set(s0, v);
+    }
+    if (v.ok && cand.length < 256) cand.push([Math.round(s0 / sr * 1000) / 1000, after, v.med]);
     last = i;
     i += 19;
   }
 
-  // Level gate: keep hits at least half as loud as the loudest broadband hit
+  // Level gate: keep hits at least `ghost` as loud as the loudest broadband hit
   // (drops pre-hits and ghost transients that sit just under the spectral limits).
   let top = 1e-9;
   for (const e of cand) top = Math.max(top, e[1]);
-  const GHOST = 0.5;                              // lower to keep softer snares
   return cand
-    .filter((e) => e[1] >= GHOST * top)
+    .filter((e) => e[1] >= ghost * top)
+    .filter((e) => e[2] >= minHz)               // last step, so a higher limit can only remove snares
     .slice(0, 128)
     .map((e) => [e[0], 140, Math.round(Math.min(1, e[1] / top) * 100) / 100, 1]);
+}
+
+// Runs both detectors on a kept region { mono, sr, start, end }. The caches live on the
+// region, so moving a sensitivity slider reuses the filtering done for the same cutoff.
+function detectEvents(region, o = {}) {
+  const { mono, sr, start, end } = region;
+  region.kickCache = region.kickCache || {};
+  region.snareCache = region.snareCache || {};
+  return extractKickEvents(mono, sr, start, end, {
+    maxHz: o.kickMax < 140 ? o.kickMax : undefined, sens: o.kickSens, cache: region.kickCache })
+    .concat(extractSnareEvents(mono, sr, start, end, {
+      minHz: o.snareMin, sens: o.snareSens, cache: region.snareCache }))
+    .sort((a, b) => a[0] - b[0]);
 }
 
 function analyzeBuffer(buffer, B, fmin, fmax, opts = {}) {
@@ -4372,9 +4536,10 @@ function analyzeBuffer(buffer, B, fmin, fmax, opts = {}) {
     bytes[i] = v < GATE ? 0 : v;
   }
 
-  const events = extractKickEvents(mono, sr, start, end)
-    .concat(extractSnareEvents(mono, sr, start, end))
-    .sort((a, b) => a[0] - b[0]);
+  const region = { mono, sr, start, end };      // kept by the popup for re-detecting
+  const events = detectEvents(region, opts);
+  if (opts.out) opts.out.region = region;
+
   return finishPattern(bytes, F, B, Math.max(0.5, dur), fmin, top, events);
 }
 
@@ -5963,6 +6128,12 @@ function sanitizeAudio(element) {
     low: ["kick", "sine", "saw", "noise", "off"].includes(element.low) ? element.low : undefined,
     high: ["noise", "sine", "saw", "off"].includes(element.high) ? element.high : undefined,
     snare: element.snare === "off" ? "off" : undefined,
+    detect: element.detect && typeof element.detect === "object" ? {
+      kickMax: clamp(element.detect.kickMax, 40, 140, 140),
+      kickSens: clamp(element.detect.kickSens, 0, 1, 0.5),
+      snareMin: clamp(element.detect.snareMin, 0, 8000, 0),
+      snareSens: clamp(element.detect.snareSens, 0, 1, 0.5)
+    } : undefined,
     bass: element.bass === true,
     loop: element.loop === true,
     pattern: { frames, bands, duration: clamp(p.duration, 0.5, 60, 6), fmin, fmax, data, events }
@@ -6002,34 +6173,6 @@ function buildButtonCss(data) {
 
   return [...base, ...custom].join(";") + ";";
 }
-
-// Rows the paragraph wraps into, from the editor's own measurement.
-/*
-function typedRowCount(data) {
-  const p = getParagraphPadding(data);
-  const lineHeight = (Number(data.fontSize) || 16) * 1.5;
-  const content = getExportHeight(data) - p.top - p.bottom;
-
-  return Math.max(1, Math.round(content / lineHeight));
-}
-
-// CSS variables that drive the typing animation.
-function typedStyle(data) {
-  const chars = Array.from(String(data.text ?? "")).length;
-  const rows = typedRowCount(data);
-  const total = Math.min(0.04 * chars, 8);       // seconds, max 8
-  const perRow = Math.max(1, Math.ceil(chars / rows));
-  const lineHeight = (Number(data.fontSize) || 16) * 1.5;
-
-  return (
-    `display:block;` +
-    `--L:${rows};--last:${rows - 1};--sj:${Math.max(2, rows)};` +
-    `--lh:${lineHeight}px;--n:${perRow};` +
-    `--rt:${(total / rows).toFixed(3)}s;--T:${total.toFixed(3)}s;`
-  );
-}
-
- */
 
 // Makes pasted text predictable: one newline style, no hidden characters.
 function normalizeParagraphText(text) {
@@ -6311,7 +6454,13 @@ function buildElementHtml(data) {
         .map((e) => e[3] === 1 ? [e[0], e[1], e[2], 1] : [e[0], e[1], e[2]]),
       low: ["kick", "sine", "saw", "noise", "off"].includes(data.low) ? data.low : undefined,
       high: ["noise", "sine", "saw", "off"].includes(data.high) ? data.high : undefined,
-      snare: data.snare === "off" ? "off" : undefined
+      snare: data.snare === "off" ? "off" : undefined,
+      detect: data.detect ? {
+        kickMax: Number(data.detect.kickMax) || 140,
+        kickSens: Number(data.detect.kickSens ?? 0.5),
+        snareMin: Number(data.detect.snareMin) || 0,
+        snareSens: Number(data.detect.snareSens ?? 0.5)
+      } : undefined
     };
 
     const bg = safePaint(data.background, "#0b1020");
