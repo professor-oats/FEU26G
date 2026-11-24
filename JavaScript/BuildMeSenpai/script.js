@@ -2917,7 +2917,7 @@ function beginAudioDraft(event) {
     stopPreview = playPattern(
       getPatternBytes(pattern),
       { loop: loopInput.checked, speed: speed(), low: lowSelect.value, high: highSelect.value,
-        snare: snareSelect.value, bass: bassInput.checked },
+        snare: snareSelect.value, comp: false, bass: bassInput.checked },
       redraw,
       () => {
         stopPreview = null;
@@ -3638,11 +3638,26 @@ function playPattern(p, o, onProgress, onEnd) {
   var snareOn = o.snare !== "off";
   var LOUD = { sine: 0.25, saw: 0.12, noise: 0.6, kick: 0.45, off: 0.25 };
 
-  var comp = ac.createDynamicsCompressor();
+  var MASTER_TRIM = 0.62;         // -4.1 dB, measured RMS excess without the compressor
   var master = ac.createGain();
-  master.gain.value = ((LOUD[lowV] + LOUD[highV]) / 2) * (bass ? 0.8 : 1);
-  master.connect(comp);
-  comp.connect(ac.destination);
+  master.gain.value = ((LOUD[lowV] + LOUD[highV]) / 2) * (bass ? 0.8 : 1) * MASTER_TRIM;
+
+  if (o.comp === true) {          // old behaviour, kept for comparison
+    var comp = ac.createDynamicsCompressor();
+    master.connect(comp);
+    comp.connect(ac.destination);
+  } else {
+    var shaper = ac.createWaveShaper();
+    var curve = new Float32Array(2049);
+    for (var ci = 0; ci < 2049; ci++) {
+      var cx = (ci - 1024) / 1024, ca = Math.abs(cx);
+      var cy = ca <= 0.8 ? ca : 0.8 + 0.2 * (Math.exp(2 * (ca - 0.8) / 0.2) - 1) / (Math.exp(2 * (ca - 0.8) / 0.2) + 1);
+      curve[ci] = cx < 0 ? -cy : cy;
+    }
+    shaper.curve = curve;
+    master.connect(shaper);
+    shaper.connect(ac.destination);
+  }
 
   var noiseBuf = null;
   if (lowV === "noise" || highV === "noise" || lowV === "kick" || snareOn) {
@@ -3667,12 +3682,13 @@ function playPattern(p, o, onProgress, onEnd) {
     var gain = bass && freq < 200 ? 1.6 : 1;
     if (voice === "kick") { gain *= hasEvents ? 0.1 : 0.25; voice = "sine"; } // kicks carry the low end
 
-    var c = new Float32Array(F), any = false;
+    var c = new Float32Array(F + 1), any = false;
     for (var f = 0; f < F; f++) {
       var v = p.bytes[f * B + b] / 255;
-      c[f] = v * gain;
+      c[f + 1] = v * gain;
       if (v > 0) any = true;
     }
+    c[0] = c[1];
     freqs.push(freq);
     voices.push(voice);
     curves.push(any && voice !== "off" ? c : null);
@@ -3727,6 +3743,7 @@ function playPattern(p, o, onProgress, onEnd) {
 
   var nodes = [], t0 = 0, raf = 0, stopped = false;
   var KICK_GAIN = 1.5;
+  var PATTERN_DELAY = 0;
 
   // Fitted to the target's kick: 5 ms chirp from ~3.3x down to f0, 51 ms plateau,
   // then exponential decay (tau 65 ms). Times are in real seconds, so speed
@@ -3858,7 +3875,7 @@ function playPattern(p, o, onProgress, onEnd) {
       }
 
       g.gain.setValueAtTime(0, ac.currentTime);
-      g.gain.setValueCurveAtTime(curves[b], t0, dur);
+      g.gain.setValueCurveAtTime(curves[b], t0 - 0.5 * dur / F + PATTERN_DELAY, dur);
       g.gain.setValueAtTime(0, t0 + dur + 0.005);
       g.connect(master);
       src.start(t0);
